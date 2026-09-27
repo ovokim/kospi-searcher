@@ -1,0 +1,22 @@
+{
+  "name": "krx-stock-screener",
+  "version": "1.0.0",
+  "description": "KRX OpenAPI 기반 KOSPI 전종목 스크리너",
+  "main": "krx_server.js",
+  "scripts": {
+    "start": "node krx_server.js",
+    "dev": "nodemon krx_server.js"
+  },
+  "keywords": ["krx", "kospi", "stock", "screener"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "adm-zip": "^0.5.10",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
