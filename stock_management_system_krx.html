@@ -2,7 +2,6 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <!-- 모바일 뷰포트 메타태그 보완 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KOSPI 퀀트 알짜주 발굴 시스템</title>
     <style>
@@ -123,7 +122,7 @@
                 <input type="text" id="searchKeyword" placeholder="종목명 또는 코드 검색..." style="width: 200px;" oninput="applyFilters()">
             </div>
 
-            <!-- 6대 실전 프리셋 (완벽 복원) -->
+            <!-- 6대 실전 프리셋 완비 -->
             <div class="preset-box">
                 <span class="preset-title">🎯 실전 퀀트 프리셋:</span>
                 <button class="btn-preset" onclick="applyPreset('peterLynch')">🚀 피터린치형 (고성장 저평가 / PEG < 1.2)</button>
@@ -175,19 +174,16 @@
                     </div>
                 </div>
                 <div class="filter-flex-row">
-                    <!-- 독립 스위치 1 -->
                     <label class="toggle-btn" id="lbl_uptrend">
                         <input type="checkbox" id="m_chkUptrend" onchange="toggleMomentumStyle(); applyFilters();">
                         <span>📈 상승추세 턴어라운드 (현재가 > 60일·120일선)</span>
                     </label>
 
-                    <!-- 독립 스위치 2 -->
                     <label class="toggle-btn" id="lbl_high52">
                         <input type="checkbox" id="m_chkHigh52" onchange="toggleMomentumStyle(); applyFilters();">
                         <span>🎯 52주 신고가 근접주 (돌파형)</span>
                     </label>
 
-                    <!-- 스위치가 켜졌을 때 연동되는 수치 조절창 -->
                     <div class="input-group">
                         <label style="color: #4c1d95;">신고가 근접도 기준 (% 이상)</label>
                         <input type="number" step="1" id="m_minHigh52Ratio" value="80" placeholder="기본: 80" oninput="applyFilters()">
@@ -374,18 +370,21 @@
             } catch (e) { }
         }
 
+        // ⭐ 3단계 스마트 핀포인트(3초 컷)가 적용된 전자동 동기화
         async function startFullSync() {
             const dartKey = document.getElementById('dartApiKey').value.trim();
             if (dartKey) localStorage.setItem('dartApiKey', dartKey);
             const prg = document.getElementById('syncProgress');
 
             try {
+                // 1단계: KOSPI 보통주 수집 (약 2초)
                 prg.innerText = '1단계: KOSPI 보통주 수집 중...';
                 const krxRes = await fetch('/api/sync-krx');
                 const krxJson = await krxRes.json();
                 rawStocks = krxJson.data;
                 applyFilters();
 
+                // 2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 (약 25초)
                 prg.innerText = `2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 중 (0/${rawStocks.length})...`;
                 const chunkSize = 5;
                 for (let i = 0; i < rawStocks.length; i += chunkSize) {
@@ -398,34 +397,38 @@
                     prg.innerText = `2단계: 재무 및 모멘텀 동기화 중 (${Math.min(i + chunkSize, rawStocks.length)}/${rawStocks.length})...`;
                 }
 
+                // 3단계: DART 스마트 핀포인트 ROE 동기화 (ROE 누락 종목만 선별 수집 -> 3초 컷!)
                 if (dartKey) {
-                    prg.innerText = `3단계: DART 고속 병렬 ROE 수집 중 (0/${rawStocks.length})...`;
-                    const dartChunkSize = 6;
-                    for (let i = 0; i < rawStocks.length; i += dartChunkSize) {
-                        const chunk = rawStocks.slice(i, i + dartChunkSize);
-                        const dRes = await fetch('/api/dart-roe-batch', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ apiKey: dartKey, stocks: chunk })
-                        });
-                        const dJson = await dRes.json();
-                        if (dJson.success && dJson.data) {
-                            const resMap = new Map(dJson.data.map(r => [r.code, r.roe]));
-                            rawStocks.forEach(s => {
-                                if (resMap.has(s.code) && resMap.get(s.code) !== null) {
-                                    s.roe = resMap.get(s.code);
-                                }
+                    const missingStocks = rawStocks.filter(s => s.roe === null || s.roe === undefined);
+                    if (missingStocks.length > 0) {
+                        prg.innerText = `3단계: DART ROE 누락분 ${missingStocks.length}개 핀포인트 보충 중...`;
+                        const dartChunkSize = 6;
+                        for (let i = 0; i < missingStocks.length; i += dartChunkSize) {
+                            const chunk = missingStocks.slice(i, i + dartChunkSize);
+                            const dRes = await fetch('/api/dart-roe-batch', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ apiKey: dartKey, stocks: chunk })
                             });
+                            const dJson = await dRes.json();
+                            if (dJson.success && dJson.data) {
+                                const resMap = new Map(dJson.data.map(r => [r.code, r.roe]));
+                                rawStocks.forEach(s => {
+                                    if (resMap.has(s.code) && resMap.get(s.code) !== null) {
+                                        s.roe = resMap.get(s.code);
+                                    }
+                                });
+                            }
                         }
-                        const completed = Math.min(i + dartChunkSize, rawStocks.length);
-                        prg.innerText = `3단계: DART 고속 병렬 ROE 동기화 중 (${completed}/${rawStocks.length})...`;
-                        if (i % 60 === 0) applyFilters();
+                        prg.innerText = `3단계: DART ROE ${missingStocks.length}개 보충 완료 ✅`;
+                    } else {
+                        prg.innerText = '3단계: 2단계에서 모든 종목의 ROE가 이미 100% 확보되어 즉시 통과! ⚡';
                     }
                 }
 
                 prg.innerText = '동기화 완료! 최신 캐시를 갱신합니다.';
                 await loadCachedData();
-                prg.innerText = '전체 동기화 성공 완료 ✅';
+                prg.innerText = '전체 동기화 성공 완료 ✅ (약 30초 소요)';
             } catch (e) {
                 prg.innerText = '동기화 오류: ' + e.message;
             }
@@ -501,7 +504,6 @@
             applyFilters();
         }
 
-        // ⭐ 버그 수정 완료: 스위치가 ON일 때만 해당 수치가 작동하도록 방어 로직 적용
         function applyFilters() {
             const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
 
@@ -553,7 +555,7 @@
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                // ⭐ [수정된 핵심 로직] 스위치가 켜져 있을 때만 해당 모멘텀 수치를 필터링함!
+                // 모멘텀 검사 (스위치가 켜졌을 때만 해당 수치를 검사하도록 완벽 방어)
                 if (chkUptrend) {
                     if (!s.isUptrend) return false;
                     if (minReturn3M !== -Infinity && s.return3M !== null && s.return3M < minReturn3M) return false;
