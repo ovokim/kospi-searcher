@@ -12,6 +12,7 @@ try {
 }
 
 const app = express();
+// 1. Render 클라우드 및 로컬 환경 동시 지원 포트 바인딩
 const PORT = process.env.PORT || 3000;
 const CACHE_FILE = path.join(__dirname, 'kospi_cache.json');
 
@@ -285,7 +286,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 peg = parseFloat((latestPer / netIncomeGrowth).toFixed(2));
             }
 
-            // 모멘텀 & 이평선
+            // 1년치 일봉 캔들 파싱
             const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
             let high52 = null;
             let low52 = null;
@@ -376,7 +377,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 3. DART ROE 고속 병렬 수집 배치 (신설: 6개 단위 병렬)
+// 3. DART ROE 고속 병렬 수집 배치 (6개 단위)
 let corpCodeMapCache = null;
 async function getDartCorpCode(apiKey, stockCode) {
     if (corpCodeMapCache && corpCodeMapCache.has(stockCode)) {
@@ -413,7 +414,6 @@ app.post('/api/dart-roe-batch', async (req, res) => {
         return res.status(400).json({ success: false, message: 'apiKey와 stocks 필요' });
     }
 
-    // ZIP 매핑 사전 로딩
     if (!corpCodeMapCache) {
         await getDartCorpCode(apiKey, '005930');
     }
@@ -469,15 +469,19 @@ app.post('/api/dart-roe-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 4. 실시간 심층 분석 HTML 리포트
+// 4. 실시간 심층 분석 HTML 리포트 (재무 + 모멘텀 통합 반영)
 app.get('/api/stock-report', async (req, res) => {
     const code = req.query.code;
     if (!code) return res.status(400).send('종목코드가 필요합니다.');
 
     try {
-        const [naverResp, wiseResp] = await Promise.all([
+        const [naverResp, wiseResp, chartResp] = await Promise.all([
             fetch(`https://m.stock.naver.com/api/stock/${code}/basic`, { headers: FETCH_HEADERS }),
             fetch(`https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${code}&fin_typ=0&freq_typ=Y`, {
+                headers: FETCH_HEADERS,
+                signal: AbortSignal.timeout(8000)
+            }),
+            fetch(`https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=260&requestType=0`, {
                 headers: FETCH_HEADERS,
                 signal: AbortSignal.timeout(8000)
             })
@@ -485,7 +489,50 @@ app.get('/api/stock-report', async (req, res) => {
 
         const basic = await naverResp.json();
         const wiseHtml = await wiseResp.text();
+        const chartText = await chartResp.text();
+
         const { years, rowData } = parseWiseReportHtml(wiseHtml);
+
+        // 차트 모멘텀 계산
+        const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
+        let high52 = '-';
+        let low52 = '-';
+        let high52Ratio = '-';
+        let ma60 = '-';
+        let ma120 = '-';
+        let return3M = '-';
+        let trendStatus = '판별 불가';
+
+        if (candleMatches.length > 0) {
+            const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
+            const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
+            const closes = candleMatches.map(c => parseFloat(c[4])).filter(v => !isNaN(v));
+
+            if (highs.length > 0) high52 = Math.max(...highs).toLocaleString() + ' 원';
+            if (lows.length > 0) low52 = Math.min(...lows).toLocaleString() + ' 원';
+
+            const cur = parseFinNumber(basic.closePrice) || (closes.length > 0 ? closes[closes.length - 1] : 0);
+            const numHigh = Math.max(...highs);
+            if (numHigh > 0 && cur > 0) {
+                high52Ratio = ((cur / numHigh) * 100).toFixed(1) + '%';
+            }
+
+            if (closes.length >= 60) {
+                const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
+                ma60 = c60.toLocaleString() + ' 원';
+                const base60 = closes[closes.length - 60];
+                if (base60 > 0) {
+                    const r = (((cur - base60) / base60) * 100).toFixed(2);
+                    return3M = (r > 0 ? '+' : '') + r + '%';
+                }
+                if (cur >= c60) trendStatus = '📈 상승추세 (60일선 위)';
+                else trendStatus = '📉 하락추세 (60일선 아래)';
+            }
+
+            if (closes.length >= 120) {
+                ma120 = Math.round(closes.slice(-120).reduce((a, b) => a + b, 0) / 120).toLocaleString() + ' 원';
+            }
+        }
 
         const financialRows = [
             '매출액', '영업이익', '당기순이익', '영업활동으로인한현금흐름', '부채비율',
@@ -515,28 +562,30 @@ app.get('/api/stock-report', async (req, res) => {
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>[분석리포트] ${stockName} (${code})</title>
     <style>
         :root { --primary: #2563eb; --bg: #f8fafc; --card: #ffffff; --text: #1e293b; --border: #e2e8f0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 30px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
         .container { max-width: 1000px; margin: 0 auto; background: var(--card); padding: 32px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; }
-        .title h1 { margin: 0; font-size: 28px; color: #0f172a; display: flex; align-items: center; gap: 10px; }
-        .code-badge { font-size: 14px; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; }
-        .btn-group { display: flex; gap: 10px; }
-        .btn { padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); text-decoration: none; font-size: 13px; }
+        .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
+        .title h1 { margin: 0; font-size: 26px; color: #0f172a; display: flex; align-items: center; gap: 10px; }
+        .code-badge { font-size: 13px; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; }
+        .btn-group { display: flex; gap: 8px; }
+        .btn { padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); text-decoration: none; font-size: 12px; }
         .btn-primary { background: var(--primary); color: white; border: none; }
-        .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 30px; }
-        .metric-card { background: #f1f5f9; padding: 16px; border-radius: 10px; border-left: 4px solid var(--primary); }
-        .metric-label { font-size: 12px; color: #64748b; margin-bottom: 6px; }
-        .metric-val { font-size: 20px; font-weight: 700; color: #0f172a; }
-        .section-title { font-size: 18px; font-weight: 700; margin: 24px 0 12px; color: #334155; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-        th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--border); }
-        th { background: #f8fafc; font-weight: 600; color: #475569; }
-        td.row-title, th:first-child { text-align: left; font-weight: 600; background: #fafafa; }
+        .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+        .card { background: #f8fafc; padding: 14px; border-radius: 10px; border-left: 4px solid var(--primary); }
+        .card.purple { border-left-color: #7c3aed; background: #faf5ff; }
+        .label { font-size: 11px; color: #64748b; margin-bottom: 4px; font-weight: 600; }
+        .val { font-size: 18px; font-weight: 800; color: #0f172a; }
+        .section-title { font-size: 16px; font-weight: 800; margin: 24px 0 10px; color: #334155; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; overflow-x: auto; }
+        th, td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--border); }
+        th { background: #f8fafc; font-weight: 700; color: #475569; }
+        td.row-title, th:first-child { text-align: left; font-weight: 700; background: #fafafa; }
         tr:hover { background: #f8fafc; }
-        .footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: #94a3b8; display: flex; justify-content: space-between; }
+        .footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 11px; color: #94a3b8; display: flex; justify-content: space-between; }
         @media print { .btn-group { display: none; } body { padding: 0; } .container { box-shadow: none; } }
     </style>
 </head>
@@ -545,7 +594,7 @@ app.get('/api/stock-report', async (req, res) => {
         <div class="header">
             <div class="title">
                 <h1>${stockName} <span class="code-badge">${code}</span></h1>
-                <p style="margin: 6px 0 0; color: #64748b; font-size: 13px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 실시간 기업 가치 심층 분석</p>
+                <p style="margin: 6px 0 0; color: #64748b; font-size: 12px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 종합 밸류에이션 및 가격 모멘텀 리포트</p>
             </div>
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="window.print()">🖨️ PDF / 인쇄</button>
@@ -553,18 +602,29 @@ app.get('/api/stock-report', async (req, res) => {
             </div>
         </div>
 
-        <div class="metrics-grid">
-            <div class="metric-card"><div class="metric-label">현재가</div><div class="metric-val">${closePrice} 원</div></div>
-            <div class="metric-card"><div class="metric-label">시가총액</div><div class="metric-val">${marketCap}</div></div>
-            <div class="metric-card"><div class="metric-label">PER</div><div class="metric-val">${per} 배</div></div>
-            <div class="metric-card"><div class="metric-label">PBR</div><div class="metric-val">${pbr} 배</div></div>
+        <!-- 1. 기본 밸류에이션 카드 -->
+        <div class="grid-4">
+            <div class="card"><div class="label">현재가</div><div class="val">${closePrice} 원</div></div>
+            <div class="card"><div class="label">시가총액</div><div class="val">${marketCap}</div></div>
+            <div class="card"><div class="label">PER</div><div class="val">${per} 배</div></div>
+            <div class="card"><div class="label">PBR</div><div class="val">${pbr} 배</div></div>
+        </div>
+
+        <!-- 2. 기술적 모멘텀 및 추세 카드 (보완 완료) -->
+        <div class="grid-4">
+            <div class="card purple"><div class="label">52주 최고가 (근접도)</div><div class="val">${high52} <span style="font-size: 13px; color: #7c3aed;">(${high52Ratio})</span></div></div>
+            <div class="card purple"><div class="label">52주 최저가</div><div class="val">${low52}</div></div>
+            <div class="card purple"><div class="label">최근 3개월 수익률</div><div class="val">${return3M}</div></div>
+            <div class="card purple"><div class="label">중기 추세 진단</div><div class="val" style="font-size: 14px;">${trendStatus}</div></div>
         </div>
 
         <div class="section-title">📊 최근 4개년 연간 재무 요약 (손익/재무/현금흐름)</div>
-        <table>
-            <thead><tr><th style="width: 220px;">주요 계정</th>${yearsHeaderHtml}</tr></thead>
-            <tbody>${rowsHtml}</tbody>
-        </table>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead><tr><th style="width: 220px;">주요 계정</th>${yearsHeaderHtml}</tr></thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>
 
         <div class="footer">
             <span>데이터 출처: NAVER 금융 & WiseReport 컨센서스</span>

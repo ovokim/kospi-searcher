@@ -2,7 +2,8 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 모바일 뷰포트 메타태그 보완 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KOSPI 퀀트 알짜주 발굴 시스템</title>
     <style>
         :root {
@@ -13,13 +14,13 @@
             --purple: #7c3aed; --purple-bg: #f5f3ff; --purple-border: #ddd6fe;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 20px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 16px; }
         .container { max-width: 1850px; margin: 0 auto; }
         
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 22px; font-weight: 800; color: #1e293b; }
         
-        .control-panel { background: var(--card-bg); border-radius: 12px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 16px; border: 1px solid var(--border); }
+        .control-panel { background: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 16px; border: 1px solid var(--border); }
         .sync-box { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
         .sync-box input { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; width: 280px; font-size: 13px; }
         .btn { padding: 8px 14px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; transition: 0.2s; }
@@ -30,7 +31,7 @@
 
         .preset-box { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
         .preset-title { font-size: 13px; font-weight: 700; color: var(--text-muted); }
-        .btn-preset { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .btn-preset { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 6px 11px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
         .btn-preset:hover { background: #dbeafe; }
         .btn-preset.gold { background: var(--gold-bg); color: var(--gold); border-color: var(--gold-border); }
         .btn-preset.purple { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
@@ -43,7 +44,7 @@
             padding: 12px 16px;
             margin-bottom: 12px;
         }
-        .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
         .section-header h3 { font-size: 13px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
         .quality-title { color: #92400e; }
         .section-desc { font-size: 11px; }
@@ -61,7 +62,7 @@
         .filter-flex-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .input-group { display: flex; flex-direction: column; gap: 3px; }
         .input-group label { font-size: 11px; font-weight: 700; }
-        .input-group input[type="number"] { padding: 5px 8px; border-radius: 6px; font-size: 12px; background: white; border: 1px solid #cbd5e1; width: 140px; }
+        .input-group input[type="number"] { padding: 5px 8px; border-radius: 6px; font-size: 12px; background: white; border: 1px solid #cbd5e1; width: 135px; }
 
         .toggle-btn {
             display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; font-weight: 700;
@@ -82,10 +83,10 @@
         .range-inputs input { width: 100%; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 11px; text-align: center; }
         .range-inputs span { font-size: 11px; color: #94a3b8; }
 
-        .status-bar { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 10px; color: var(--text-muted); }
+        .status-bar { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 10px; color: var(--text-muted); flex-wrap: wrap; gap: 8px; }
         .page-size-select { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 12px; }
 
-        .table-wrap { background: var(--card-bg); border-radius: 12px; overflow-x: auto; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .table-wrap { background: var(--card-bg); border-radius: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: right; white-space: nowrap; }
         th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
         th { background: #f8fafc; font-weight: 700; color: #475569; cursor: pointer; user-select: none; }
@@ -97,12 +98,12 @@
         .pos { color: var(--danger); font-weight: 600; }
         .neg { color: var(--primary); font-weight: 600; }
         
-        .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; margin-left: 3px; }
         .badge-green { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
         .badge-purple { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
         .badge-gold { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
         
-        .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 16px; }
+        .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
         .page-btn { padding: 6px 12px; border: 1px solid var(--border); background: white; border-radius: 6px; cursor: pointer; font-size: 12px; }
         .page-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
     </style>
@@ -122,12 +123,16 @@
                 <input type="text" id="searchKeyword" placeholder="종목명 또는 코드 검색..." style="width: 200px;" oninput="applyFilters()">
             </div>
 
+            <!-- 6대 실전 프리셋 (완벽 복원) -->
             <div class="preset-box">
-                <span class="preset-title">🎯 실전 프리셋:</span>
-                <button class="btn-preset purple" onclick="applyPreset('turnaround')">🚀 바닥 탈출 턴어라운드 (체급+상승추세)</button>
-                <button class="btn-preset purple" onclick="applyPreset('breakout')">🔥 52주 신고가 돌파 주도주</button>
-                <button class="btn-preset gold" onclick="applyPreset('qualityGrowth')">👑 지속성장 알짜 대장주 (3년연속성장)</button>
-                <button class="btn-preset" onclick="applyPreset('reset')">🔄 조건 전체 초기화</button>
+                <span class="preset-title">🎯 실전 퀀트 프리셋:</span>
+                <button class="btn-preset" onclick="applyPreset('peterLynch')">🚀 피터린치형 (고성장 저평가 / PEG < 1.2)</button>
+                <button class="btn-preset" onclick="applyPreset('cashCow')">💰 버핏형 (FCF수익률 > 4% + 캐시카우)</button>
+                <button class="btn-preset" onclick="applyPreset('undervalued')">💎 정통 저평가 (저PER + 저PBR + 고ROE)</button>
+                <button class="btn-preset gold" onclick="applyPreset('qualityGrowth')">👑 지속성장 대장주 (3년연속성장)</button>
+                <button class="btn-preset purple" onclick="applyPreset('turnaround')">📈 바닥 탈출 턴어라운드 (이평선돌파)</button>
+                <button class="btn-preset purple" onclick="applyPreset('breakout')">🔥 52주 신고가 돌파 (주도주)</button>
+                <button class="btn-preset" onclick="applyPreset('reset')" style="margin-left: auto;">🔄 전체 초기화</button>
             </div>
 
             <!-- [독립 1] 알짜주 체급 섹션 -->
@@ -170,23 +175,26 @@
                     </div>
                 </div>
                 <div class="filter-flex-row">
+                    <!-- 독립 스위치 1 -->
                     <label class="toggle-btn" id="lbl_uptrend">
                         <input type="checkbox" id="m_chkUptrend" onchange="toggleMomentumStyle(); applyFilters();">
                         <span>📈 상승추세 턴어라운드 (현재가 > 60일·120일선)</span>
                     </label>
 
+                    <!-- 독립 스위치 2 -->
                     <label class="toggle-btn" id="lbl_high52">
                         <input type="checkbox" id="m_chkHigh52" onchange="toggleMomentumStyle(); applyFilters();">
                         <span>🎯 52주 신고가 근접주 (돌파형)</span>
                     </label>
 
+                    <!-- 스위치가 켜졌을 때 연동되는 수치 조절창 -->
                     <div class="input-group">
-                        <label style="color: #4c1d95;">52주 고점 근접도 (% 이상)</label>
+                        <label style="color: #4c1d95;">신고가 근접도 기준 (% 이상)</label>
                         <input type="number" step="1" id="m_minHigh52Ratio" value="80" placeholder="기본: 80" oninput="applyFilters()">
                     </div>
 
                     <div class="input-group">
-                        <label style="color: #4c1d95;">최근 3개월 수익률 (% 이상)</label>
+                        <label style="color: #4c1d95;">최근 3개월 수익률 기준 (% 이상)</label>
                         <input type="number" step="0.5" id="m_minReturn3M" value="0" placeholder="기본: 0" oninput="applyFilters()">
                     </div>
                 </div>
@@ -296,7 +304,7 @@
         <div class="status-bar">
             <div>
                 총 <strong id="totalCount">0</strong>개 중 <strong id="filteredCount">0</strong>개 발굴
-                <span style="margin-left: 10px; font-size: 11px;">(종목명 클릭 시 최신 단일 HTML 리포트 팝업)</span>
+                <span style="margin-left: 10px; font-size: 11px;">(종목명 클릭 시 종합 심층 HTML 리포트 팝업)</span>
             </div>
             <div>
                 <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize(this.value)">
@@ -372,14 +380,12 @@
             const prg = document.getElementById('syncProgress');
 
             try {
-                // 1단계: KOSPI 보통주 수집
                 prg.innerText = '1단계: KOSPI 보통주 수집 중...';
                 const krxRes = await fetch('/api/sync-krx');
                 const krxJson = await krxRes.json();
                 rawStocks = krxJson.data;
                 applyFilters();
 
-                // 2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집
                 prg.innerText = `2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 중 (0/${rawStocks.length})...`;
                 const chunkSize = 5;
                 for (let i = 0; i < rawStocks.length; i += chunkSize) {
@@ -392,7 +398,6 @@
                     prg.innerText = `2단계: 재무 및 모멘텀 동기화 중 (${Math.min(i + chunkSize, rawStocks.length)}/${rawStocks.length})...`;
                 }
 
-                // 3단계: DART 고속 병렬 ROE 수집 (6개 묶음 배치 -> 약 1분 50초 컷!)
                 if (dartKey) {
                     prg.innerText = `3단계: DART 고속 병렬 ROE 수집 중 (0/${rawStocks.length})...`;
                     const dartChunkSize = 6;
@@ -457,7 +462,29 @@
             document.querySelectorAll('.range-inputs input, .filter-flex-row input[type="number"]').forEach(el => el.value = '');
             document.querySelectorAll('.filter-flex-row input[type="checkbox"]').forEach(el => el.checked = false);
 
-            if (type === 'turnaround') {
+            if (type === 'peterLynch') {
+                document.getElementById('f_max_marketCap').value = '8000';
+                document.getElementById('f_min_salesGrowth').value = '10';
+                document.getElementById('f_min_netIncomeGrowth').value = '15';
+                document.getElementById('f_max_peg').value = '1.2';
+                document.getElementById('f_max_debtRatio').value = '100';
+            } else if (type === 'cashCow') {
+                document.getElementById('f_min_fcfYield').value = '4.0';
+                document.getElementById('f_max_debtRatio').value = '60';
+                document.getElementById('f_min_dividendYield').value = '2.5';
+                document.getElementById('q_chkCashQuality').checked = true;
+            } else if (type === 'undervalued') {
+                document.getElementById('f_max_per').value = '10';
+                document.getElementById('f_max_pbr').value = '1.0';
+                document.getElementById('f_min_roe').value = '10';
+            } else if (type === 'qualityGrowth') {
+                document.getElementById('q_minSales').value = '1000';
+                document.getElementById('q_minNetIncome').value = '100';
+                document.getElementById('q_chkContinuous').checked = true;
+                document.getElementById('f_max_per').value = '15';
+                document.getElementById('f_max_debtRatio').value = '100';
+                document.getElementById('f_min_fcfYield').value = '2.0';
+            } else if (type === 'turnaround') {
                 document.getElementById('q_minSales').value = '1000';
                 document.getElementById('q_minNetIncome').value = '100';
                 document.getElementById('m_chkUptrend').checked = true;
@@ -468,33 +495,30 @@
                 document.getElementById('m_chkHigh52').checked = true;
                 document.getElementById('m_minHigh52Ratio').value = '85';
                 document.getElementById('f_max_per').value = '15';
-            } else if (type === 'qualityGrowth') {
-                document.getElementById('q_minSales').value = '1000';
-                document.getElementById('q_minNetIncome').value = '100';
-                document.getElementById('q_chkContinuous').checked = true;
-                document.getElementById('f_max_per').value = '15';
-                document.getElementById('f_max_debtRatio').value = '100';
-                document.getElementById('f_min_fcfYield').value = '2.0';
             }
 
             toggleMomentumStyle();
             applyFilters();
         }
 
+        // ⭐ 버그 수정 완료: 스위치가 ON일 때만 해당 수치가 작동하도록 방어 로직 적용
         function applyFilters() {
             const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
 
+            // 알짜주 체급 필터
             const minSales = parseFloat(document.getElementById('q_minSales').value) || -Infinity;
             const minNet = parseFloat(document.getElementById('q_minNetIncome').value) || -Infinity;
             const minOpm = parseFloat(document.getElementById('q_minOpm').value) || -Infinity;
             const chkContinuous = document.getElementById('q_chkContinuous').checked;
             const chkCashQuality = document.getElementById('q_chkCashQuality').checked;
 
+            // 모멘텀 스위치 및 수치
             const chkUptrend = document.getElementById('m_chkUptrend').checked;
             const chkHigh52 = document.getElementById('m_chkHigh52').checked;
             const minHigh52Ratio = parseFloat(document.getElementById('m_minHigh52Ratio').value) || -Infinity;
             const minReturn3M = parseFloat(document.getElementById('m_minReturn3M').value) || -Infinity;
 
+            // 일반 구간 필터
             const getRange = (id) => ({
                 min: parseFloat(document.getElementById(`f_min_${id}`).value) || -Infinity,
                 max: parseFloat(document.getElementById(`f_max_${id}`).value) || Infinity
@@ -516,6 +540,7 @@
             filteredStocks = rawStocks.filter(s => {
                 if (kw && !s.name.toLowerCase().includes(kw) && !s.code.includes(kw)) return false;
 
+                // 알짜주 체급 검사
                 if (s.latestSales !== null && s.latestSales < minSales) return false;
                 if (minSales !== -Infinity && s.latestSales === null) return false;
 
@@ -528,12 +553,17 @@
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                if (chkUptrend && !s.isUptrend) return false;
-                if (chkHigh52 && (s.high52Ratio === null || s.high52Ratio < minHigh52Ratio)) return false;
+                // ⭐ [수정된 핵심 로직] 스위치가 켜져 있을 때만 해당 모멘텀 수치를 필터링함!
+                if (chkUptrend) {
+                    if (!s.isUptrend) return false;
+                    if (minReturn3M !== -Infinity && s.return3M !== null && s.return3M < minReturn3M) return false;
+                }
 
-                if (s.high52Ratio !== null && s.high52Ratio < minHigh52Ratio) return false;
-                if (s.return3M !== null && s.return3M < minReturn3M) return false;
+                if (chkHigh52) {
+                    if (s.high52Ratio === null || (minHigh52Ratio !== -Infinity && s.high52Ratio < minHigh52Ratio)) return false;
+                }
 
+                // 일반 구간 검사
                 const inRange = (val, range) => {
                     if (range.min === -Infinity && range.max === Infinity) return true;
                     if (val === null || val === undefined) return false;
@@ -592,6 +622,7 @@
                     <td>
                         <a class="stock-link" onclick="openReport('${s.code}')" title="심층 HTML 리포트">${s.name} ↗</a>
                         ${s.isContinuousGrowth ? '<span class="badge badge-gold" title="3개년 연속 매출+순익 우상향">👑 3년연속</span>' : ''}
+                        ${s.ocfQuality ? '<span class="badge badge-green" title="영업현금흐름 > 순이익 (진짜 현금창출)">✅ 현금우수</span>' : ''}
                         ${s.isUptrend ? '<span class="badge badge-green" title="현재가 > 60일선 & 120일선">📈 상승추세</span>' : ''}
                         ${(s.high52Ratio || 0) >= 80 ? '<span class="badge badge-purple" title="52주 고점 대비 -20% 이내">🎯 신고가</span>' : ''}
                     </td>
