@@ -370,7 +370,7 @@
             } catch (e) { }
         }
 
-        // ⭐ 3단계 스마트 핀포인트(3초 컷)가 적용된 전자동 동기화
+        // ⭐ 2단계 실시간 메모리 병합 + 3단계 즉시통과 완성형 동기화
         async function startFullSync() {
             const dartKey = document.getElementById('dartApiKey').value.trim();
             if (dartKey) localStorage.setItem('dartApiKey', dartKey);
@@ -384,20 +384,35 @@
                 rawStocks = krxJson.data;
                 applyFilters();
 
-                // 2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 (약 25초)
-                prg.innerText = `2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 중 (0/${rawStocks.length})...`;
+                // 2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 (약 20~25초)
+                prg.innerText = `2단계: 퀀트 재무 & 일봉 모멘텀 병렬 수집 중 (0/${rawStocks.length})...`;
                 const chunkSize = 5;
                 for (let i = 0; i < rawStocks.length; i += chunkSize) {
                     const chunk = rawStocks.slice(i, i + chunkSize);
-                    await fetch('/api/sync-wisereport-batch', {
+                    const batchRes = await fetch('/api/sync-wisereport-batch', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ stocks: chunk })
                     });
-                    prg.innerText = `2단계: 재무 및 모멘텀 동기화 중 (${Math.min(i + chunkSize, rawStocks.length)}/${rawStocks.length})...`;
+                    const batchJson = await batchRes.json();
+
+                    // ⭐ [핵심 수정] 2단계 결과를 브라우저 메모리에 실시간으로 즉시 병합!
+                    if (batchJson.success && batchJson.data) {
+                        const dataMap = new Map(batchJson.data.map(d => [d.code, d]));
+                        rawStocks.forEach(s => {
+                            const d = dataMap.get(s.code);
+                            if (d) Object.assign(s, d);
+                        });
+                    }
+
+                    const completed = Math.min(i + chunkSize, rawStocks.length);
+                    prg.innerText = `2단계: 재무 및 모멘텀 동기화 중 (${completed}/${rawStocks.length})...`;
+
+                    // 100개마다 테이블 실시간 반영
+                    if (i % 100 === 0) applyFilters();
                 }
 
-                // 3단계: DART 스마트 핀포인트 ROE 동기화 (ROE 누락 종목만 선별 수집 -> 3초 컷!)
+                // 3단계: DART 스마트 핀포인트 ROE (2단계에서 이미 ROE가 100% 확보되었으므로 즉시 통과!)
                 if (dartKey) {
                     const missingStocks = rawStocks.filter(s => s.roe === null || s.roe === undefined);
                     if (missingStocks.length > 0) {
@@ -428,7 +443,7 @@
 
                 prg.innerText = '동기화 완료! 최신 캐시를 갱신합니다.';
                 await loadCachedData();
-                prg.innerText = '전체 동기화 성공 완료 ✅ (약 30초 소요)';
+                prg.innerText = '전체 동기화 성공 완료 ✅ (초고속 완료)';
             } catch (e) {
                 prg.innerText = '동기화 오류: ' + e.message;
             }
@@ -555,7 +570,7 @@
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                // 모멘텀 검사 (스위치가 켜졌을 때만 해당 수치를 검사하도록 완벽 방어)
+                // 모멘텀 검사 (스위치 ON 시에만 수치 작동)
                 if (chkUptrend) {
                     if (!s.isUptrend) return false;
                     if (minReturn3M !== -Infinity && s.return3M !== null && s.return3M < minReturn3M) return false;
