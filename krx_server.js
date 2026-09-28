@@ -115,6 +115,13 @@ app.get('/api/sync-krx', async (req, res) => {
                         opm: null,
                         isContinuousGrowth: false,
                         ocfQuality: false,
+                        high52: null,
+                        low52: null,
+                        high52Ratio: null,
+                        ma60: null,
+                        ma120: null,
+                        return3M: null,
+                        isUptrend: false,
                         per: null,
                         pbr: null,
                         roe: null,
@@ -148,6 +155,13 @@ app.get('/api/sync-krx', async (req, res) => {
                             opm: os.opm,
                             isContinuousGrowth: os.isContinuousGrowth,
                             ocfQuality: os.ocfQuality,
+                            high52: os.high52,
+                            low52: os.low52,
+                            high52Ratio: os.high52Ratio,
+                            ma60: os.ma60,
+                            ma120: os.ma120,
+                            return3M: os.return3M,
+                            isUptrend: os.isUptrend,
                             per: os.per,
                             pbr: os.pbr,
                             roe: ns.roe || os.roe,
@@ -175,7 +189,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. WiseReport 퀀트 재무 수집 (체급 및 3개년 연속 성장 분석)
+// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트(52주/이평선/모멘텀) 병렬 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -184,13 +198,18 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
     const results = await Promise.all(stocks.map(async (stk) => {
         try {
-            const url = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
-            const resp = await fetch(url, {
-                headers: FETCH_HEADERS,
-                signal: AbortSignal.timeout(7000)
-            });
-            const text = await resp.text();
-            const { rowData } = parseWiseReportHtml(text);
+            const wiseUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
+            const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=260&requestType=0`;
+
+            const [wiseResp, chartResp] = await Promise.all([
+                fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }),
+                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
+            ]);
+
+            const [wiseText, chartText] = await Promise.all([wiseResp.text(), chartResp.text()]);
+
+            // --- A. 재무 데이터 파싱 ---
+            const { rowData } = parseWiseReportHtml(wiseText);
 
             const getAllValues = (candidateKeys) => {
                 for (const key of candidateKeys) {
@@ -231,7 +250,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             const latestDivYield = latest(divYieldVals);
             const latestDivPayout = latest(divPayoutVals);
 
-            // 3개년 연속 성장(계단식 우상향) 판별
             const isSalesCont = salesVals.length >= 3 &&
                 salesVals[salesVals.length - 1] > salesVals[salesVals.length - 2] &&
                 salesVals[salesVals.length - 2] > salesVals[salesVals.length - 3];
@@ -241,17 +259,13 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 netVals[netVals.length - 2] > netVals[netVals.length - 3];
 
             const isContinuousGrowth = isSalesCont && isNetCont;
-
-            // 현금 창출력 검증 (영업현금흐름 > 당기순이익)
             const ocfQuality = (latestOcf !== null && latestNet !== null && latestNet > 0) ? (latestOcf >= latestNet) : false;
 
-            // 영업이익률 (%)
             let opm = null;
             if (latestOp !== null && latestSales !== null && latestSales > 0) {
                 opm = parseFloat(((latestOp / latestSales) * 100).toFixed(2));
             }
 
-            // 성장률 (%)
             let salesGrowth = null;
             if (latestSales !== null && prevSales !== null && prevSales > 0) {
                 salesGrowth = parseFloat((((latestSales - prevSales) / prevSales) * 100).toFixed(2));
@@ -262,16 +276,59 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 netIncomeGrowth = parseFloat((((latestNet - prevNet) / Math.abs(prevNet)) * 100).toFixed(2));
             }
 
-            // FCF 수익률 (%)
             let fcfYield = null;
             if (latestFcf !== null && stk.marketCap && stk.marketCap > 0) {
                 fcfYield = parseFloat(((latestFcf / stk.marketCap) * 100).toFixed(2));
             }
 
-            // PEG
             let peg = null;
             if (latestPer && latestPer > 0 && netIncomeGrowth && netIncomeGrowth > 0) {
                 peg = parseFloat((latestPer / netIncomeGrowth).toFixed(2));
+            }
+
+            // --- B. 기술적 모멘텀 및 캔들(260일) 파싱 ---
+            const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
+            let high52 = null;
+            let low52 = null;
+            let high52Ratio = null;
+            let ma60 = null;
+            let ma120 = null;
+            let return3M = null;
+            let isUptrend = false;
+
+            if (candleMatches.length > 0) {
+                const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
+                const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
+                const closes = candleMatches.map(c => parseFloat(c[4])).filter(v => !isNaN(v));
+
+                if (highs.length > 0) high52 = Math.max(...highs);
+                if (lows.length > 0) low52 = Math.min(...lows);
+
+                const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
+
+                if (high52 && curPrice > 0) {
+                    high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
+                }
+
+                if (closes.length >= 60) {
+                    const last60 = closes.slice(-60);
+                    ma60 = Math.round(last60.reduce((a, b) => a + b, 0) / 60);
+
+                    const base60 = closes[closes.length - 60];
+                    if (base60 > 0) {
+                        return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
+                    }
+                }
+
+                if (closes.length >= 120) {
+                    const last120 = closes.slice(-120);
+                    ma120 = Math.round(last120.reduce((a, b) => a + b, 0) / 120);
+                }
+
+                // 상승추세: 현재가가 60일선과 120일선 위에 안착
+                if (curPrice > 0 && ma60) {
+                    isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
+                }
             }
 
             return {
@@ -281,6 +338,13 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 opm,
                 isContinuousGrowth,
                 ocfQuality,
+                high52,
+                low52,
+                high52Ratio,
+                ma60,
+                ma120,
+                return3M,
+                isUptrend,
                 per: latestPer,
                 pbr: latestPbr,
                 roe: latestRoe,
