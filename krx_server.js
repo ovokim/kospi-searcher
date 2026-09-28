@@ -208,7 +208,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
             const [wiseText, chartText] = await Promise.all([wiseResp.text(), chartResp.text()]);
 
-            // --- A. 재무 데이터 파싱 ---
             const { rowData } = parseWiseReportHtml(wiseText);
 
             const getAllValues = (candidateKeys) => {
@@ -286,7 +285,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 peg = parseFloat((latestPer / netIncomeGrowth).toFixed(2));
             }
 
-            // --- B. 기술적 모멘텀 및 캔들(260일) 파싱 ---
+            // 모멘텀 & 이평선
             const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
             let high52 = null;
             let low52 = null;
@@ -325,7 +324,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                     ma120 = Math.round(last120.reduce((a, b) => a + b, 0) / 120);
                 }
 
-                // 상승추세: 현재가가 60일선과 120일선 위에 안착
                 if (curPrice > 0 && ma60) {
                     isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
                 }
@@ -378,7 +376,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 3. DART ROE 수집 프록시
+// 3. DART ROE 고속 병렬 수집 배치 (신설: 6개 단위 병렬)
 let corpCodeMapCache = null;
 async function getDartCorpCode(apiKey, stockCode) {
     if (corpCodeMapCache && corpCodeMapCache.has(stockCode)) {
@@ -386,68 +384,89 @@ async function getDartCorpCode(apiKey, stockCode) {
     }
     if (!AdmZip || !xml2js) return null;
 
-    const zipUrl = `https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=${apiKey}`;
-    const resp = await fetch(zipUrl, { signal: AbortSignal.timeout(15000) });
-    const arrayBuffer = await resp.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const zip = new AdmZip(buffer);
-    const xmlEntry = zip.getEntries().find(e => e.entryName.endsWith('.xml'));
-    if (!xmlEntry) return null;
-    const xmlData = zip.readAsText(xmlEntry);
-    const parsed = await xml2js.parseStringPromise(xmlData);
-    const list = parsed.result.list;
-    corpCodeMapCache = new Map();
-    for (const item of list) {
-        const sc = (item.stock_code[0] || '').trim();
-        const cc = (item.corp_code[0] || '').trim();
-        if (sc) corpCodeMapCache.set(sc, cc);
+    try {
+        const zipUrl = `https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=${apiKey}`;
+        const resp = await fetch(zipUrl, { signal: AbortSignal.timeout(15000) });
+        const arrayBuffer = await resp.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const zip = new AdmZip(buffer);
+        const xmlEntry = zip.getEntries().find(e => e.entryName.endsWith('.xml'));
+        if (!xmlEntry) return null;
+        const xmlData = zip.readAsText(xmlEntry);
+        const parsed = await xml2js.parseStringPromise(xmlData);
+        const list = parsed.result.list;
+        corpCodeMapCache = new Map();
+        for (const item of list) {
+            const sc = (item.stock_code[0] || '').trim();
+            const cc = (item.corp_code[0] || '').trim();
+            if (sc) corpCodeMapCache.set(sc, cc);
+        }
+        return corpCodeMapCache.get(stockCode) || null;
+    } catch (e) {
+        return null;
     }
-    return corpCodeMapCache.get(stockCode) || null;
 }
 
-app.get('/api/dart-roe', async (req, res) => {
-    const { apiKey, code, year } = req.query;
-    if (!apiKey || !code) return res.status(400).json({ success: false, message: 'apiKey와 code 필요' });
-    try {
-        const corpCode = await getDartCorpCode(apiKey, code);
-        if (!corpCode) return res.json({ success: false, roe: null });
-
-        const targetYear = year || (new Date().getFullYear() - 1);
-        const fnUrl = `https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?crtfc_key=${apiKey}&corp_code=${corpCode}&bsns_year=${targetYear}&reprt_code=11011&fs_div=CFS`;
-        const resp = await fetch(fnUrl, { signal: AbortSignal.timeout(8000) });
-        const fnData = await resp.json();
-        const list = fnData.list || [];
-
-        let netIncome = null;
-        let totalEquity = null;
-        for (const it of list) {
-            if (it.account_nm === '당기순이익' || it.account_id === 'ifrs-full_ProfitLoss') {
-                netIncome = parseFinNumber(it.thstrm_amount);
-            }
-            if (it.account_nm === '자본총계' || it.account_id === 'ifrs-full_Equity') {
-                totalEquity = parseFinNumber(it.thstrm_amount);
-            }
-        }
-        let roe = null;
-        if (netIncome !== null && totalEquity && totalEquity > 0) {
-            roe = parseFloat(((netIncome / totalEquity) * 100).toFixed(2));
-        }
-
-        if (roe !== null && fs.existsSync(CACHE_FILE)) {
-            try {
-                const cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-                const item = cache.find(x => x.code === code);
-                if (item) {
-                    item.roe = roe;
-                    fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2), 'utf8');
-                }
-            } catch (e) { }
-        }
-
-        res.json({ success: true, roe });
-    } catch (err) {
-        res.json({ success: false, roe: null, error: err.message });
+app.post('/api/dart-roe-batch', async (req, res) => {
+    const { apiKey, stocks, year } = req.body;
+    if (!apiKey || !stocks || !Array.isArray(stocks)) {
+        return res.status(400).json({ success: false, message: 'apiKey와 stocks 필요' });
     }
+
+    // ZIP 매핑 사전 로딩
+    if (!corpCodeMapCache) {
+        await getDartCorpCode(apiKey, '005930');
+    }
+
+    const targetYear = year || (new Date().getFullYear() - 1);
+
+    const results = await Promise.all(stocks.map(async (stk) => {
+        try {
+            const corpCode = await getDartCorpCode(apiKey, stk.code);
+            if (!corpCode) return { code: stk.code, roe: null };
+
+            const fnUrl = `https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?crtfc_key=${apiKey}&corp_code=${corpCode}&bsns_year=${targetYear}&reprt_code=11011&fs_div=CFS`;
+            const resp = await fetch(fnUrl, { signal: AbortSignal.timeout(7000) });
+            const fnData = await resp.json();
+            const list = fnData.list || [];
+
+            let netIncome = null;
+            let totalEquity = null;
+            for (const it of list) {
+                if (it.account_nm === '당기순이익' || it.account_id === 'ifrs-full_ProfitLoss') {
+                    netIncome = parseFinNumber(it.thstrm_amount);
+                }
+                if (it.account_nm === '자본총계' || it.account_id === 'ifrs-full_Equity') {
+                    totalEquity = parseFinNumber(it.thstrm_amount);
+                }
+            }
+            let roe = null;
+            if (netIncome !== null && totalEquity && totalEquity > 0) {
+                roe = parseFloat(((netIncome / totalEquity) * 100).toFixed(2));
+            }
+            return { code: stk.code, roe };
+        } catch (e) {
+            return { code: stk.code, roe: null };
+        }
+    }));
+
+    if (fs.existsSync(CACHE_FILE)) {
+        try {
+            const cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+            const rMap = new Map(results.filter(r => r.roe !== null).map(r => [r.code, r.roe]));
+            if (rMap.size > 0) {
+                const updated = cache.map(item => {
+                    if (rMap.has(item.code)) {
+                        return { ...item, roe: rMap.get(item.code) };
+                    }
+                    return item;
+                });
+                fs.writeFileSync(CACHE_FILE, JSON.stringify(updated, null, 2), 'utf8');
+            }
+        } catch (e) { }
+    }
+
+    res.json({ success: true, data: results });
 });
 
 // 4. 실시간 심층 분석 HTML 리포트

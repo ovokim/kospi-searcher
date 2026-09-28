@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KOSPI 퀀트 알짜주 발굴 시스템</title>
     <style>
         :root {
@@ -35,7 +35,7 @@
         .btn-preset.gold { background: var(--gold-bg); color: var(--gold); border-color: var(--gold-border); }
         .btn-preset.purple { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
 
-        /* ⭐ [독립 1] 알짜주 체급 섹션 */
+        /* [독립 1] 알짜주 체급 섹션 */
         .quality-section {
             background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
             border: 2px solid #fcd34d;
@@ -48,7 +48,7 @@
         .quality-title { color: #92400e; }
         .section-desc { font-size: 11px; }
 
-        /* ⭐ [독립 2] 모멘텀 & 가격 추세 섹션 */
+        /* [독립 2] 모멘텀 & 가격 추세 섹션 */
         .momentum-section {
             background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
             border: 2px solid #c4b5fd;
@@ -130,7 +130,7 @@
                 <button class="btn-preset" onclick="applyPreset('reset')">🔄 조건 전체 초기화</button>
             </div>
 
-            <!-- ⭐ [독립 1] 알짜주 체급 섹션 -->
+            <!-- [독립 1] 알짜주 체급 섹션 -->
             <div class="quality-section">
                 <div class="section-header">
                     <h3 class="quality-title">💎 체급 & 지속성장 [알짜주 펀더멘털 필터]</h3>
@@ -160,7 +160,7 @@
                 </div>
             </div>
 
-            <!-- ⭐ [독립 2] 모멘텀 & 가격 추세 섹션 (가치함정 탈출) -->
+            <!-- [독립 2] 모멘텀 & 가격 추세 섹션 -->
             <div class="momentum-section">
                 <div class="section-header">
                     <h3 class="momentum-title">📈 모멘텀 & 가격 추세 [가치함정 극복 필터]</h3>
@@ -170,19 +170,16 @@
                     </div>
                 </div>
                 <div class="filter-flex-row">
-                    <!-- 스위치 1: 상승추세 -->
                     <label class="toggle-btn" id="lbl_uptrend">
                         <input type="checkbox" id="m_chkUptrend" onchange="toggleMomentumStyle(); applyFilters();">
                         <span>📈 상승추세 턴어라운드 (현재가 > 60일·120일선)</span>
                     </label>
 
-                    <!-- 스위치 2: 52주 신고가 근접 -->
                     <label class="toggle-btn" id="lbl_high52">
                         <input type="checkbox" id="m_chkHigh52" onchange="toggleMomentumStyle(); applyFilters();">
                         <span>🎯 52주 신고가 근접주 (돌파형)</span>
                     </label>
 
-                    <!-- 사용자 조절 수치 입력칸 -->
                     <div class="input-group">
                         <label style="color: #4c1d95;">52주 고점 근접도 (% 이상)</label>
                         <input type="number" step="1" id="m_minHigh52Ratio" value="80" placeholder="기본: 80" oninput="applyFilters()">
@@ -375,12 +372,14 @@
             const prg = document.getElementById('syncProgress');
 
             try {
+                // 1단계: KOSPI 보통주 수집
                 prg.innerText = '1단계: KOSPI 보통주 수집 중...';
                 const krxRes = await fetch('/api/sync-krx');
                 const krxJson = await krxRes.json();
                 rawStocks = krxJson.data;
                 applyFilters();
 
+                // 2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집
                 prg.innerText = `2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 중 (0/${rawStocks.length})...`;
                 const chunkSize = 5;
                 for (let i = 0; i < rawStocks.length; i += chunkSize) {
@@ -393,21 +392,29 @@
                     prg.innerText = `2단계: 재무 및 모멘텀 동기화 중 (${Math.min(i + chunkSize, rawStocks.length)}/${rawStocks.length})...`;
                 }
 
+                // 3단계: DART 고속 병렬 ROE 수집 (6개 묶음 배치 -> 약 1분 50초 컷!)
                 if (dartKey) {
-                    prg.innerText = '3단계: DART 정밀 ROE 순차 동기화 시작...';
-                    for (let i = 0; i < rawStocks.length; i++) {
-                        const stk = rawStocks[i];
-                        try {
-                            const dRes = await fetch(`/api/dart-roe?apiKey=${dartKey}&code=${stk.code}`);
-                            const dJson = await dRes.json();
-                            if (dJson.success && dJson.roe !== null) {
-                                stk.roe = dJson.roe;
-                            }
-                        } catch (e) { }
-                        if (i % 20 === 0) {
-                            prg.innerText = `3단계: DART ROE 동기화 중 (${i}/${rawStocks.length})...`;
-                            applyFilters();
+                    prg.innerText = `3단계: DART 고속 병렬 ROE 수집 중 (0/${rawStocks.length})...`;
+                    const dartChunkSize = 6;
+                    for (let i = 0; i < rawStocks.length; i += dartChunkSize) {
+                        const chunk = rawStocks.slice(i, i + dartChunkSize);
+                        const dRes = await fetch('/api/dart-roe-batch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ apiKey: dartKey, stocks: chunk })
+                        });
+                        const dJson = await dRes.json();
+                        if (dJson.success && dJson.data) {
+                            const resMap = new Map(dJson.data.map(r => [r.code, r.roe]));
+                            rawStocks.forEach(s => {
+                                if (resMap.has(s.code) && resMap.get(s.code) !== null) {
+                                    s.roe = resMap.get(s.code);
+                                }
+                            });
                         }
+                        const completed = Math.min(i + dartChunkSize, rawStocks.length);
+                        prg.innerText = `3단계: DART 고속 병렬 ROE 동기화 중 (${completed}/${rawStocks.length})...`;
+                        if (i % 60 === 0) applyFilters();
                     }
                 }
 
@@ -451,20 +458,17 @@
             document.querySelectorAll('.filter-flex-row input[type="checkbox"]').forEach(el => el.checked = false);
 
             if (type === 'turnaround') {
-                // 🚀 바닥 탈출 턴어라운드 (체급 + 상승추세 ON, 신고가 OFF)
                 document.getElementById('q_minSales').value = '1000';
                 document.getElementById('q_minNetIncome').value = '100';
                 document.getElementById('m_chkUptrend').checked = true;
                 document.getElementById('m_minReturn3M').value = '5';
-                document.getElementById('f_min_fcf').value = '0'; // FCF 흑자
+                document.getElementById('f_min_fcf').value = '0';
             } else if (type === 'breakout') {
-                // 🔥 52주 신고가 돌파 주도주 (신고가 근접 85% 이상 + PER 15 이하)
                 document.getElementById('q_minSales').value = '1000';
                 document.getElementById('m_chkHigh52').checked = true;
                 document.getElementById('m_minHigh52Ratio').value = '85';
                 document.getElementById('f_max_per').value = '15';
             } else if (type === 'qualityGrowth') {
-                // 👑 지속성장 알짜 대장주 (3년 연속성장 + 저부채 + FCF수익률 2%↑)
                 document.getElementById('q_minSales').value = '1000';
                 document.getElementById('q_minNetIncome').value = '100';
                 document.getElementById('q_chkContinuous').checked = true;
@@ -480,20 +484,17 @@
         function applyFilters() {
             const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
 
-            // 알짜주 필터
             const minSales = parseFloat(document.getElementById('q_minSales').value) || -Infinity;
             const minNet = parseFloat(document.getElementById('q_minNetIncome').value) || -Infinity;
             const minOpm = parseFloat(document.getElementById('q_minOpm').value) || -Infinity;
             const chkContinuous = document.getElementById('q_chkContinuous').checked;
             const chkCashQuality = document.getElementById('q_chkCashQuality').checked;
 
-            // 모멘텀 필터
             const chkUptrend = document.getElementById('m_chkUptrend').checked;
             const chkHigh52 = document.getElementById('m_chkHigh52').checked;
             const minHigh52Ratio = parseFloat(document.getElementById('m_minHigh52Ratio').value) || -Infinity;
             const minReturn3M = parseFloat(document.getElementById('m_minReturn3M').value) || -Infinity;
 
-            // 일반 구간 필터
             const getRange = (id) => ({
                 min: parseFloat(document.getElementById(`f_min_${id}`).value) || -Infinity,
                 max: parseFloat(document.getElementById(`f_max_${id}`).value) || Infinity
@@ -515,7 +516,6 @@
             filteredStocks = rawStocks.filter(s => {
                 if (kw && !s.name.toLowerCase().includes(kw) && !s.code.includes(kw)) return false;
 
-                // 알짜주 조건 검사
                 if (s.latestSales !== null && s.latestSales < minSales) return false;
                 if (minSales !== -Infinity && s.latestSales === null) return false;
 
@@ -528,15 +528,12 @@
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                // 모멘텀 조건 검사 (독립 스위치)
                 if (chkUptrend && !s.isUptrend) return false;
                 if (chkHigh52 && (s.high52Ratio === null || s.high52Ratio < minHigh52Ratio)) return false;
 
-                // 수치 조절값 검사
                 if (s.high52Ratio !== null && s.high52Ratio < minHigh52Ratio) return false;
                 if (s.return3M !== null && s.return3M < minReturn3M) return false;
 
-                // 일반 구간 검사
                 const inRange = (val, range) => {
                     if (range.min === -Infinity && range.max === Infinity) return true;
                     if (val === null || val === undefined) return false;
