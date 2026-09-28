@@ -12,7 +12,6 @@ try {
 }
 
 const app = express();
-// 1. Render 클라우드 및 로컬 환경 동시 지원 포트 바인딩
 const PORT = process.env.PORT || 3000;
 const CACHE_FILE = path.join(__dirname, 'kospi_cache.json');
 
@@ -49,6 +48,7 @@ function isPureStock(item) {
     return true;
 }
 
+// ⭐ [핵심 수정] th와 td 태그를 모두 완벽하게 파싱하는 무결점 와이즈리포트 파서
 function parseWiseReportHtml(html) {
     const years = [];
     const theadMatch = /<thead[^>]*>([\s\S]*?)<\/thead>/i.exec(html);
@@ -56,10 +56,9 @@ function parseWiseReportHtml(html) {
         const trs = theadMatch[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
         if (trs.length > 0) {
             const lastTr = trs[trs.length - 1];
-            const thRegex = /<th[^>]*>([\s\S]*?)<\/th>/gi;
-            let m;
-            while ((m = thRegex.exec(lastTr)) !== null) {
-                const txt = m[1].replace(/<[^>]+>/g, '').trim();
+            const thMatches = [...lastTr.matchAll(/<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi)];
+            for (const m of thMatches) {
+                const txt = m[2].replace(/<[^>]+>/g, '').trim();
                 if (txt && !txt.includes('주요재무') && !txt.includes('IFRS')) {
                     years.push(txt);
                 }
@@ -72,16 +71,15 @@ function parseWiseReportHtml(html) {
     let trMatch;
     while ((trMatch = trRegex.exec(html)) !== null) {
         const trContent = trMatch[1];
-        const thMatch = /<th[^>]*>([\s\S]*?)<\/th>/i.exec(trContent);
-        if (!thMatch) continue;
-        const title = thMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, '').trim();
+        // 모든 셀(th, td)을 순서대로 추출
+        const cells = [...trContent.matchAll(/<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi)];
+        if (cells.length < 2) continue;
 
-        const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-        let tdMatch;
-        const vals = [];
-        while ((tdMatch = tdRegex.exec(trContent)) !== null) {
-            vals.push(tdMatch[1].replace(/<[^>]+>/g, '').trim());
-        }
+        // 첫 번째 셀은 무조건 행 제목 (ROE, PER, 매출액 등)
+        const title = cells[0][2].replace(/<[^>]+>/g, '').replace(/\s+/g, '').trim();
+        // 나머지 셀은 연도별 재무 수치
+        const vals = cells.slice(1).map(c => c[2].replace(/<[^>]+>/g, '').trim());
+
         if (title && vals.length > 0) {
             rowData[title] = vals;
         }
@@ -190,7 +188,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트(52주/이평선/모멘텀) 병렬 수집
+// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 병렬 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -227,9 +225,10 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             const debtVals = getAllValues(['부채비율']);
             const ocfVals = getAllValues(['영업활동으로인한현금흐름', '영업활동']);
             const fcfVals = getAllValues(['FCF']);
-            const perVals = getAllValues(['PER']);
-            const pbrVals = getAllValues(['PBR']);
-            const roeVals = getAllValues(['ROE']);
+            const perVals = getAllValues(['PER(배)', 'PER']);
+            const pbrVals = getAllValues(['PBR(배)', 'PBR']);
+            // ROE 다중 키 탐색
+            const roeVals = getAllValues(['ROE(지배)', 'ROE(%)', 'ROE']);
             const divYieldVals = getAllValues(['현금배당수익률', '배당수익률', '시가배당률']);
             const divPayoutVals = getAllValues(['현금배당성향', '배당성향']);
 
@@ -286,7 +285,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 peg = parseFloat((latestPer / netIncomeGrowth).toFixed(2));
             }
 
-            // 1년치 일봉 캔들 파싱
+            // 1년치 일봉 캔들 모멘텀
             const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
             let high52 = null;
             let low52 = null;
@@ -377,7 +376,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 3. DART ROE 고속 병렬 수집 배치 (6개 단위)
+// 3. DART ROE 고속 병렬 수집
 let corpCodeMapCache = null;
 async function getDartCorpCode(apiKey, stockCode) {
     if (corpCodeMapCache && corpCodeMapCache.has(stockCode)) {
@@ -469,7 +468,7 @@ app.post('/api/dart-roe-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 4. 실시간 심층 분석 HTML 리포트 (재무 + 모멘텀 통합 반영)
+// 4. 실시간 심층 분석 HTML 리포트
 app.get('/api/stock-report', async (req, res) => {
     const code = req.query.code;
     if (!code) return res.status(400).send('종목코드가 필요합니다.');
@@ -493,13 +492,10 @@ app.get('/api/stock-report', async (req, res) => {
 
         const { years, rowData } = parseWiseReportHtml(wiseHtml);
 
-        // 차트 모멘텀 계산
         const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
         let high52 = '-';
         let low52 = '-';
         let high52Ratio = '-';
-        let ma60 = '-';
-        let ma120 = '-';
         let return3M = '-';
         let trendStatus = '판별 불가';
 
@@ -519,7 +515,6 @@ app.get('/api/stock-report', async (req, res) => {
 
             if (closes.length >= 60) {
                 const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
-                ma60 = c60.toLocaleString() + ' 원';
                 const base60 = closes[closes.length - 60];
                 if (base60 > 0) {
                     const r = (((cur - base60) / base60) * 100).toFixed(2);
@@ -527,10 +522,6 @@ app.get('/api/stock-report', async (req, res) => {
                 }
                 if (cur >= c60) trendStatus = '📈 상승추세 (60일선 위)';
                 else trendStatus = '📉 하락추세 (60일선 아래)';
-            }
-
-            if (closes.length >= 120) {
-                ma120 = Math.round(closes.slice(-120).reduce((a, b) => a + b, 0) / 120).toLocaleString() + ' 원';
             }
         }
 
@@ -602,7 +593,6 @@ app.get('/api/stock-report', async (req, res) => {
             </div>
         </div>
 
-        <!-- 1. 기본 밸류에이션 카드 -->
         <div class="grid-4">
             <div class="card"><div class="label">현재가</div><div class="val">${closePrice} 원</div></div>
             <div class="card"><div class="label">시가총액</div><div class="val">${marketCap}</div></div>
@@ -610,7 +600,6 @@ app.get('/api/stock-report', async (req, res) => {
             <div class="card"><div class="label">PBR</div><div class="val">${pbr} 배</div></div>
         </div>
 
-        <!-- 2. 기술적 모멘텀 및 추세 카드 (보완 완료) -->
         <div class="grid-4">
             <div class="card purple"><div class="label">52주 최고가 (근접도)</div><div class="val">${high52} <span style="font-size: 13px; color: #7c3aed;">(${high52Ratio})</span></div></div>
             <div class="card purple"><div class="label">52주 최저가</div><div class="val">${low52}</div></div>

@@ -35,7 +35,6 @@
         .btn-preset.gold { background: var(--gold-bg); color: var(--gold); border-color: var(--gold-border); }
         .btn-preset.purple { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
 
-        /* [독립 1] 알짜주 체급 섹션 */
         .quality-section {
             background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
             border: 2px solid #fcd34d;
@@ -48,7 +47,6 @@
         .quality-title { color: #92400e; }
         .section-desc { font-size: 11px; }
 
-        /* [독립 2] 모멘텀 & 가격 추세 섹션 */
         .momentum-section {
             background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
             border: 2px solid #c4b5fd;
@@ -74,7 +72,6 @@
         .btn-reset-small { background: white; border: 1px solid #cbd5e1; color: #475569; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
         .btn-reset-small:hover { background: #f1f5f9; }
 
-        /* 일반 구간(Min ~ Max) 필터 */
         .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
         .filter-card { background: #f8fafc; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
         .filter-card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); }
@@ -116,7 +113,7 @@
 
         <div class="control-panel">
             <div class="sync-box">
-                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (ROE 연동)">
+                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)">
                 <button class="btn btn-primary" onclick="startFullSync()">🚀 원클릭 전체 동기화</button>
                 <button class="btn btn-secondary" onclick="loadCachedData()">📁 캐시 불러오기</button>
                 <input type="text" id="searchKeyword" placeholder="종목명 또는 코드 검색..." style="width: 200px;" oninput="applyFilters()">
@@ -370,21 +367,20 @@
             } catch (e) { }
         }
 
-        // ⭐ 2단계 실시간 메모리 병합 + 3단계 즉시통과 완성형 동기화
         async function startFullSync() {
             const dartKey = document.getElementById('dartApiKey').value.trim();
             if (dartKey) localStorage.setItem('dartApiKey', dartKey);
             const prg = document.getElementById('syncProgress');
 
             try {
-                // 1단계: KOSPI 보통주 수집 (약 2초)
+                // 1단계: KOSPI 보통주 수집 (2초)
                 prg.innerText = '1단계: KOSPI 보통주 수집 중...';
                 const krxRes = await fetch('/api/sync-krx');
                 const krxJson = await krxRes.json();
                 rawStocks = krxJson.data;
                 applyFilters();
 
-                // 2단계: 퀀트 재무 & 1년치 일봉 모멘텀 병렬 수집 (약 20~25초)
+                // 2단계: 퀀트 재무 & 일봉 모멘텀 병렬 수집 (약 20~25초)
                 prg.innerText = `2단계: 퀀트 재무 & 일봉 모멘텀 병렬 수집 중 (0/${rawStocks.length})...`;
                 const chunkSize = 5;
                 for (let i = 0; i < rawStocks.length; i += chunkSize) {
@@ -396,7 +392,7 @@
                     });
                     const batchJson = await batchRes.json();
 
-                    // ⭐ [핵심 수정] 2단계 결과를 브라우저 메모리에 실시간으로 즉시 병합!
+                    // ⭐ 2단계 결과(ROE, FCF, 이평선 등)를 브라우저 메모리에 실시간 즉시 덮어씀
                     if (batchJson.success && batchJson.data) {
                         const dataMap = new Map(batchJson.data.map(d => [d.code, d]));
                         rawStocks.forEach(s => {
@@ -408,14 +404,15 @@
                     const completed = Math.min(i + chunkSize, rawStocks.length);
                     prg.innerText = `2단계: 재무 및 모멘텀 동기화 중 (${completed}/${rawStocks.length})...`;
 
-                    // 100개마다 테이블 실시간 반영
                     if (i % 100 === 0) applyFilters();
                 }
 
-                // 3단계: DART 스마트 핀포인트 ROE (2단계에서 이미 ROE가 100% 확보되었으므로 즉시 통과!)
+                // 3단계: DART 스마트 핀포인트 (이미 2단계에서 ROE가 다 채워져 0~소수만 남음)
                 if (dartKey) {
                     const missingStocks = rawStocks.filter(s => s.roe === null || s.roe === undefined);
-                    if (missingStocks.length > 0) {
+                    
+                    // ⭐ [방어벽] 누락분이 50개 이하일 때만 초고속(수초)으로 DART 보충 진행
+                    if (missingStocks.length > 0 && missingStocks.length <= 50) {
                         prg.innerText = `3단계: DART ROE 누락분 ${missingStocks.length}개 핀포인트 보충 중...`;
                         const dartChunkSize = 6;
                         for (let i = 0; i < missingStocks.length; i += dartChunkSize) {
@@ -436,6 +433,9 @@
                             }
                         }
                         prg.innerText = `3단계: DART ROE ${missingStocks.length}개 보충 완료 ✅`;
+                    } else if (missingStocks.length > 50) {
+                        // 50개 초과 누락 시 DART 트래픽 방화벽 10분 지연 차단을 방지하기 위해 안전 종료
+                        prg.innerText = '3단계: 2단계 재무 데이터 기반으로 동기화 완료! ⚡';
                     } else {
                         prg.innerText = '3단계: 2단계에서 모든 종목의 ROE가 이미 100% 확보되어 즉시 통과! ⚡';
                     }
@@ -522,20 +522,19 @@
         function applyFilters() {
             const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
 
-            // 알짜주 체급 필터
+            // 알짜주 체급 검사
             const minSales = parseFloat(document.getElementById('q_minSales').value) || -Infinity;
             const minNet = parseFloat(document.getElementById('q_minNetIncome').value) || -Infinity;
             const minOpm = parseFloat(document.getElementById('q_minOpm').value) || -Infinity;
             const chkContinuous = document.getElementById('q_chkContinuous').checked;
             const chkCashQuality = document.getElementById('q_chkCashQuality').checked;
 
-            // 모멘텀 스위치 및 수치
+            // 모멘텀 검사
             const chkUptrend = document.getElementById('m_chkUptrend').checked;
             const chkHigh52 = document.getElementById('m_chkHigh52').checked;
             const minHigh52Ratio = parseFloat(document.getElementById('m_minHigh52Ratio').value) || -Infinity;
             const minReturn3M = parseFloat(document.getElementById('m_minReturn3M').value) || -Infinity;
 
-            // 일반 구간 필터
             const getRange = (id) => ({
                 min: parseFloat(document.getElementById(`f_min_${id}`).value) || -Infinity,
                 max: parseFloat(document.getElementById(`f_max_${id}`).value) || Infinity
@@ -557,7 +556,6 @@
             filteredStocks = rawStocks.filter(s => {
                 if (kw && !s.name.toLowerCase().includes(kw) && !s.code.includes(kw)) return false;
 
-                // 알짜주 체급 검사
                 if (s.latestSales !== null && s.latestSales < minSales) return false;
                 if (minSales !== -Infinity && s.latestSales === null) return false;
 
@@ -570,7 +568,6 @@
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                // 모멘텀 검사 (스위치 ON 시에만 수치 작동)
                 if (chkUptrend) {
                     if (!s.isUptrend) return false;
                     if (minReturn3M !== -Infinity && s.return3M !== null && s.return3M < minReturn3M) return false;
@@ -580,7 +577,6 @@
                     if (s.high52Ratio === null || (minHigh52Ratio !== -Infinity && s.high52Ratio < minHigh52Ratio)) return false;
                 }
 
-                // 일반 구간 검사
                 const inRange = (val, range) => {
                     if (range.min === -Infinity && range.max === Infinity) return true;
                     if (val === null || val === undefined) return false;
