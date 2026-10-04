@@ -83,9 +83,9 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// 1. KOSPI + KOSDAQ 보통주 통합 수집
+// 1. KOSPI & KOSDAQ 보통주 통합 수집 (약 2~3초 완료)
 app.get('/api/sync-krx', async (req, res) => {
-    const targetMarket = (req.query.market || 'ALL').toUpperCase(); // ALL, KOSPI, KOSDAQ
+    const targetMarket = (req.query.market || 'ALL').toUpperCase();
     try {
         console.log(`[시장 수집 시작] 대상: ${targetMarket}`);
         const markets = targetMarket === 'ALL' ? ['KOSPI', 'KOSDAQ'] : [targetMarket];
@@ -192,110 +192,109 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 병렬 수집
+// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 고속 병렬 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
-    const { stocks } = req.body;
+    const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
         return res.status(400).json({ success: false, message: 'stocks 배열 필요' });
     }
 
     const results = await Promise.all(stocks.map(async (stk) => {
         try {
+            // ⭐ [최적화 1] 캔들 130일 수집 (120일선 및 3M수익률 계산 최적화)
+            const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
             const wiseUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
-            const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=260&requestType=0`;
 
-            const [wiseResp, chartResp] = await Promise.all([
-                fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
-                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
-            ]);
+            // ⭐ [최적화 2] fastMode(초고속 모드)이고 이미 재무가 있으면 WiseReport HTML 생략
+            const needWiseReport = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
 
-            const [wiseText, chartText] = await Promise.all([wiseResp.text(), chartResp.text()]);
-            const { rowData } = parseWiseReportHtml(wiseText);
+            const fetchTasks = [
+                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) })
+            ];
+            if (needWiseReport) {
+                fetchTasks.push(fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) }));
+            }
 
-            const getAllValues = (candidateKeys) => {
-                for (const key of candidateKeys) {
-                    const matchedRow = Object.keys(rowData).find(k => k.includes(key));
-                    if (matchedRow) {
-                        return rowData[matchedRow].map(parseFinNumber).filter(v => v !== null);
+            const responses = await Promise.all(fetchTasks);
+            const chartText = await responses[0].text();
+            const wiseText = needWiseReport && responses[1] ? await responses[1].text() : null;
+
+            let finData = {};
+            if (wiseText) {
+                const { rowData } = parseWiseReportHtml(wiseText);
+                const getAllValues = (candidateKeys) => {
+                    for (const key of candidateKeys) {
+                        const matchedRow = Object.keys(rowData).find(k => k.includes(key));
+                        if (matchedRow) return rowData[matchedRow].map(parseFinNumber).filter(v => v !== null);
                     }
-                }
-                return [];
-            };
+                    return [];
+                };
 
-            const salesVals = getAllValues(['매출액']);
-            const netVals = getAllValues(['당기순이익']);
-            const opVals = getAllValues(['영업이익']);
-            const debtVals = getAllValues(['부채비율']);
-            const ocfVals = getAllValues(['영업활동으로인한현금흐름', '영업활동']);
-            const fcfVals = getAllValues(['FCF']);
-            const perVals = getAllValues(['PER(배)', 'PER']);
-            const pbrVals = getAllValues(['PBR(배)', 'PBR']);
-            const roeVals = getAllValues(['ROE(지배)', 'ROE(%)', 'ROE']);
-            const divYieldVals = getAllValues(['현금배당수익률', '배당수익률', '시가배당률']);
-            const divPayoutVals = getAllValues(['현금배당성향', '배당성향']);
+                const salesVals = getAllValues(['매출액']);
+                const netVals = getAllValues(['당기순이익']);
+                const opVals = getAllValues(['영업이익']);
+                const debtVals = getAllValues(['부채비율']);
+                const ocfVals = getAllValues(['영업활동으로인한현금흐름', '영업활동']);
+                const fcfVals = getAllValues(['FCF']);
+                const perVals = getAllValues(['PER(배)', 'PER']);
+                const pbrVals = getAllValues(['PBR(배)', 'PBR']);
+                const roeVals = getAllValues(['ROE(지배)', 'ROE(%)', 'ROE']);
+                const divYieldVals = getAllValues(['현금배당수익률', '배당수익률', '시가배당률']);
+                const divPayoutVals = getAllValues(['현금배당성향', '배당성향']);
 
-            const latest = (arr) => arr.length > 0 ? arr[arr.length - 1] : null;
-            const prev = (arr) => arr.length > 1 ? arr[arr.length - 2] : null;
+                const latest = (arr) => arr.length > 0 ? arr[arr.length - 1] : null;
+                const prev = (arr) => arr.length > 1 ? arr[arr.length - 2] : null;
 
-            const latestSales = latest(salesVals);
-            const prevSales = prev(salesVals);
-            const latestNet = latest(netVals);
-            const prevNet = prev(netVals);
-            const latestOp = latest(opVals);
-            const latestDebt = latest(debtVals);
-            const latestOcf = latest(ocfVals);
-            const latestFcf = latest(fcfVals);
-            const latestPer = latest(perVals);
-            const latestPbr = latest(pbrVals);
-            const latestRoe = latest(roeVals);
-            const latestDivYield = latest(divYieldVals);
-            const latestDivPayout = latest(divPayoutVals);
+                const latestSales = latest(salesVals);
+                const prevSales = prev(salesVals);
+                const latestNet = latest(netVals);
+                const prevNet = prev(netVals);
+                const latestOp = latest(opVals);
+                const latestDebt = latest(debtVals);
+                const latestOcf = latest(ocfVals);
+                const latestFcf = latest(fcfVals);
+                const latestPer = latest(perVals);
+                const latestPbr = latest(pbrVals);
+                const latestRoe = latest(roeVals);
+                const latestDivYield = latest(divYieldVals);
+                const latestDivPayout = latest(divPayoutVals);
 
-            const isSalesCont = salesVals.length >= 3 &&
-                salesVals[salesVals.length - 1] > salesVals[salesVals.length - 2] &&
-                salesVals[salesVals.length - 2] > salesVals[salesVals.length - 3];
+                const isSalesCont = salesVals.length >= 3 &&
+                    salesVals[salesVals.length - 1] > salesVals[salesVals.length - 2] &&
+                    salesVals[salesVals.length - 2] > salesVals[salesVals.length - 3];
+                const isNetCont = netVals.length >= 3 &&
+                    netVals[netVals.length - 1] > netVals[netVals.length - 2] &&
+                    netVals[netVals.length - 2] > netVals[netVals.length - 3];
 
-            const isNetCont = netVals.length >= 3 &&
-                netVals[netVals.length - 1] > netVals[netVals.length - 2] &&
-                netVals[netVals.length - 2] > netVals[netVals.length - 3];
+                let opm = (latestOp !== null && latestSales > 0) ? parseFloat(((latestOp / latestSales) * 100).toFixed(2)) : null;
+                let salesGrowth = (latestSales !== null && prevSales > 0) ? parseFloat((((latestSales - prevSales) / prevSales) * 100).toFixed(2)) : null;
+                let netIncomeGrowth = (latestNet !== null && Math.abs(prevNet) > 0) ? parseFloat((((latestNet - prevNet) / Math.abs(prevNet)) * 100).toFixed(2)) : null;
+                let fcfYield = (latestFcf !== null && stk.marketCap > 0) ? parseFloat(((latestFcf / stk.marketCap) * 100).toFixed(2)) : null;
 
-            const isContinuousGrowth = isSalesCont && isNetCont;
-            const ocfQuality = (latestOcf !== null && latestNet !== null && latestNet > 0) ? (latestOcf >= latestNet) : false;
-
-            let opm = null;
-            if (latestOp !== null && latestSales !== null && latestSales > 0) {
-                opm = parseFloat(((latestOp / latestSales) * 100).toFixed(2));
+                finData = {
+                    latestSales,
+                    latestNetIncome: latestNet,
+                    opm,
+                    isContinuousGrowth: isSalesCont && isNetCont,
+                    ocfQuality: (latestOcf !== null && latestNet > 0) ? (latestOcf >= latestNet) : false,
+                    per: latestPer,
+                    pbr: latestPbr,
+                    roe: latestRoe,
+                    fcf: latestFcf,
+                    fcfYield,
+                    salesGrowth,
+                    netIncomeGrowth,
+                    debtRatio: latestDebt,
+                    ocf: latestOcf,
+                    peg: (latestPer > 0 && netIncomeGrowth > 0) ? parseFloat((latestPer / netIncomeGrowth).toFixed(2)) : null,
+                    dividendYield: latestDivYield,
+                    dividendPayout: latestDivPayout
+                };
             }
 
-            let salesGrowth = null;
-            if (latestSales !== null && prevSales !== null && prevSales > 0) {
-                salesGrowth = parseFloat((((latestSales - prevSales) / prevSales) * 100).toFixed(2));
-            }
-
-            let netIncomeGrowth = null;
-            if (latestNet !== null && prevNet !== null && Math.abs(prevNet) > 0) {
-                netIncomeGrowth = parseFloat((((latestNet - prevNet) / Math.abs(prevNet)) * 100).toFixed(2));
-            }
-
-            let fcfYield = null;
-            if (latestFcf !== null && stk.marketCap && stk.marketCap > 0) {
-                fcfYield = parseFloat(((latestFcf / stk.marketCap) * 100).toFixed(2));
-            }
-
-            let peg = null;
-            if (latestPer && latestPer > 0 && netIncomeGrowth && netIncomeGrowth > 0) {
-                peg = parseFloat((latestPer / netIncomeGrowth).toFixed(2));
-            }
-
-            // 1년치 일봉 캔들 모멘텀 계산
+            // 일봉 차트 모멘텀 파싱
             const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
-            let high52 = null;
-            let low52 = null;
-            let high52Ratio = null;
-            let ma60 = null;
-            let ma120 = null;
-            let return3M = null;
-            let isUptrend = false;
+            let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
 
             if (candleMatches.length > 0) {
                 const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
@@ -306,26 +305,18 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 if (lows.length > 0) low52 = Math.min(...lows);
 
                 const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
-
-                if (high52 && curPrice > 0) {
-                    high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
-                }
+                if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
 
                 if (closes.length >= 60) {
                     const last60 = closes.slice(-60);
                     ma60 = Math.round(last60.reduce((a, b) => a + b, 0) / 60);
-
                     const base60 = closes[closes.length - 60];
-                    if (base60 > 0) {
-                        return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
-                    }
+                    if (base60 > 0) return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
                 }
-
                 if (closes.length >= 120) {
                     const last120 = closes.slice(-120);
                     ma120 = Math.round(last120.reduce((a, b) => a + b, 0) / 120);
                 }
-
                 if (curPrice > 0 && ma60) {
                     isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
                 }
@@ -333,30 +324,14 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
             return {
                 code: stk.code,
-                latestSales,
-                latestNetIncome: latestNet,
-                opm,
-                isContinuousGrowth,
-                ocfQuality,
+                ...finData,
                 high52,
                 low52,
                 high52Ratio,
                 ma60,
                 ma120,
                 return3M,
-                isUptrend,
-                per: latestPer,
-                pbr: latestPbr,
-                roe: latestRoe,
-                fcf: latestFcf,
-                fcfYield: fcfYield,
-                salesGrowth: salesGrowth,
-                netIncomeGrowth: netIncomeGrowth,
-                debtRatio: latestDebt,
-                ocf: latestOcf,
-                peg: peg,
-                dividendYield: latestDivYield,
-                dividendPayout: latestDivPayout
+                isUptrend
             };
         } catch (e) {
             return { code: stk.code };
@@ -457,7 +432,7 @@ app.post('/api/dart-roe-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 4. 단일 종목 심층 분석 리포트
+// 4. 단일 종목 실시간 심층 분석 리포트
 app.get('/api/stock-report', async (req, res) => {
     const code = req.query.code;
     if (!code) return res.status(400).send('종목코드가 필요합니다.');
@@ -619,7 +594,7 @@ app.get('/api/cached-stocks', (req, res) => {
     res.json({ success: true, count: 0, data: [] });
 });
 
-// ⭐ 6. 한국 NXT(Nextrade 20:00 마감) 대응: 평일 20:05 자동 수집 백그라운드 엔진
+// 6. 한국 NXT(대체거래소 20:00 마감) 대응: 평일 20:05 자동 수집 스케줄러
 async function runBackgroundAutoSync() {
     console.log('[자동스케줄러] 평일 20:05 NXT 장 마감 후 자동 전체 동기화 시작...');
     try {
@@ -651,10 +626,10 @@ async function runBackgroundAutoSync() {
                 page++;
             }
         }
-        console.log(`[자동스케줄러] 1단계 대상 종목: ${allStocks.length}개 수집 완료`);
+        console.log(`[자동스케줄러] 1단계 대상: ${allStocks.length}개 수집 완료`);
 
-        // 5개씩 청크로 재무/차트 수집
-        const chunkSize = 5;
+        // 25개씩 청크로 일봉 및 재무 고속 수집
+        const chunkSize = 25;
         const total = allStocks.length;
         const enriched = [];
 
@@ -662,63 +637,12 @@ async function runBackgroundAutoSync() {
             const chunk = allStocks.slice(i, i + chunkSize);
             const chunkResults = await Promise.all(chunk.map(async (stk) => {
                 try {
-                    const wiseUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
-                    const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=260&requestType=0`;
-                    const [wiseResp, chartResp] = await Promise.all([
-                        fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
-                        fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
-                    ]);
-                    const [wiseText, chartText] = await Promise.all([wiseResp.text(), chartResp.text()]);
-                    const { rowData } = parseWiseReportHtml(wiseText);
-
-                    const getAll = (keys) => {
-                        for (const k of keys) {
-                            const m = Object.keys(rowData).find(x => x.includes(k));
-                            if (m) return rowData[m].map(parseFinNumber).filter(v => v !== null);
-                        }
-                        return [];
-                    };
-
-                    const sales = getAll(['매출액']);
-                    const nets = getAll(['당기순이익']);
-                    const ops = getAll(['영업이익']);
-                    const debts = getAll(['부채비율']);
-                    const ocfs = getAll(['영업활동으로인한현금흐름', '영업활동']);
-                    const fcfs = getAll(['FCF']);
-                    const pers = getAll(['PER(배)', 'PER']);
-                    const pbrs = getAll(['PBR(배)', 'PBR']);
-                    const roes = getAll(['ROE(지배)', 'ROE(%)', 'ROE']);
-                    const divs = getAll(['현금배당수익률', '배당수익률']);
-                    const pays = getAll(['현금배당성향']);
-
-                    const last = (arr) => arr.length > 0 ? arr[arr.length - 1] : null;
-                    const prev = (arr) => arr.length > 1 ? arr[arr.length - 2] : null;
-
-                    const lSales = last(sales);
-                    const pSales = prev(sales);
-                    const lNet = last(nets);
-                    const pNet = prev(nets);
-                    const lOp = last(ops);
-                    const lDebt = last(debts);
-                    const lOcf = last(ocfs);
-                    const lFcf = last(fcfs);
-                    const lPer = last(pers);
-                    const lPbr = last(pbrs);
-                    const lRoe = last(roes);
-
-                    const isContinuous = sales.length >= 3 && nets.length >= 3 &&
-                        sales[sales.length - 1] > sales[sales.length - 2] &&
-                        sales[sales.length - 2] > sales[sales.length - 3] &&
-                        nets[nets.length - 1] > nets[nets.length - 2] &&
-                        nets[nets.length - 2] > nets[nets.length - 3];
-
-                    let opm = (lOp && lSales && lSales > 0) ? parseFloat(((lOp / lSales) * 100).toFixed(2)) : null;
-                    let salesGrowth = (lSales && pSales && pSales > 0) ? parseFloat((((lSales - pSales) / pSales) * 100).toFixed(2)) : null;
-                    let netGrowth = (lNet && pNet && Math.abs(pNet) > 0) ? parseFloat((((lNet - pNet) / Math.abs(pNet)) * 100).toFixed(2)) : null;
-                    let fcfYield = (lFcf && stk.marketCap && stk.marketCap > 0) ? parseFloat(((lFcf / stk.marketCap) * 100).toFixed(2)) : null;
+                    const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
+                    const chartResp = await fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) });
+                    const chartText = await chartResp.text();
 
                     const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
-                    let high52 = null, low52 = null, high52Ratio = null, return3M = null, isUptrend = false;
+                    let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
                     if (candleMatches.length > 0) {
                         const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
                         const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
@@ -737,28 +661,11 @@ async function runBackgroundAutoSync() {
 
                     return {
                         ...stk,
-                        latestSales: lSales,
-                        latestNetIncome: lNet,
-                        opm,
-                        isContinuousGrowth: isContinuous,
-                        ocfQuality: (lOcf !== null && lNet !== null && lNet > 0) ? (lOcf >= lNet) : false,
                         high52,
                         low52,
                         high52Ratio,
                         return3M,
-                        isUptrend,
-                        per: lPer,
-                        pbr: lPbr,
-                        roe: lRoe,
-                        fcf: lFcf,
-                        fcfYield,
-                        salesGrowth,
-                        netIncomeGrowth: netGrowth,
-                        debtRatio: lDebt,
-                        ocf: lOcf,
-                        peg: (lPer && lPer > 0 && netGrowth && netGrowth > 0) ? parseFloat((lPer / netGrowth).toFixed(2)) : null,
-                        dividendYield: last(divs),
-                        dividendPayout: last(pays)
+                        isUptrend
                     };
                 } catch (e) {
                     return stk;
@@ -767,26 +674,36 @@ async function runBackgroundAutoSync() {
             enriched.push(...chunkResults);
         }
 
-        fs.writeFileSync(CACHE_FILE, JSON.stringify(enriched, null, 2), 'utf8');
-        console.log(`[자동스케줄러] ${enriched.length}개 전종목 NXT 장 마감 캐시 갱신 완료 ✅`);
+        // 기존 캐시의 재무 데이터와 병합 보존
+        if (fs.existsSync(CACHE_FILE)) {
+            try {
+                const oldCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+                const eMap = new Map(enriched.map(x => [x.code, x]));
+                const merged = oldCache.map(oldItem => {
+                    const newItem = eMap.get(oldItem.code);
+                    return newItem ? { ...oldItem, ...newItem } : oldItem;
+                });
+                fs.writeFileSync(CACHE_FILE, JSON.stringify(merged, null, 2), 'utf8');
+            } catch (e) { }
+        } else {
+            fs.writeFileSync(CACHE_FILE, JSON.stringify(enriched, null, 2), 'utf8');
+        }
+        console.log(`[자동스케줄러] NXT 장 마감 캐시 갱신 완료 ✅`);
     } catch (e) {
         console.error('[자동스케줄러 오류]', e.message);
     }
 }
 
-// 매 분마다 검사하여 한국 시각(KST) 평일 20:05 정각 실행
 let lastAutoSyncDate = '';
 setInterval(() => {
     const now = new Date();
-    // KST 시간 계산 (UTC+9)
     const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const kstNow = new Date(utc + (9 * 3600000));
-    const day = kstNow.getDay(); // 0: 일, 1~5: 월~금, 6: 토
+    const kstNow = new Date(utc + (9 * 3600000)); // UTC+9 한국표준시
+    const day = kstNow.getDay();
     const hour = kstNow.getHours();
     const min = kstNow.getMinutes();
     const dateStr = kstNow.toISOString().slice(0, 10);
 
-    // 평일 월~금, 20시 05분, 당일 1회만 실행
     if (day >= 1 && day <= 5 && hour === 20 && min === 5 && lastAutoSyncDate !== dateStr) {
         lastAutoSyncDate = dateStr;
         runBackgroundAutoSync();

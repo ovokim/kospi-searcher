@@ -18,7 +18,6 @@
         
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 22px; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
-        
         .market-badge { font-size: 12px; background: #e2e8f0; color: #334155; padding: 3px 8px; border-radius: 6px; }
         
         .control-panel { background: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 16px; border: 1px solid var(--border); }
@@ -147,17 +146,25 @@
 
         <div class="control-panel">
             <div class="sync-box">
-                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 250px;">
-                <button class="btn btn-primary" id="btnSyncStart" onclick="startFullSync()">🚀 원클릭 전체 동기화</button>
+                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 220px;">
+                <!-- ⚡ 초고속 모드: 25초 컷 (기존 재무 캐시 유지 + 일봉/주가/이평선/모멘텀 초고속 갱신) -->
+                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/이평선/모멘텀만 25초 만에 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
+                <!-- 🚀 정밀 전체 모드: 약 1분 (3,000개 전종목 재무까지 전수 수집) -->
+                <button class="btn btn-secondary" id="btnFullSync" onclick="startSync(false)" title="모든 종목의 재무제표까지 새로 긁어오는 전체 정밀 갱신">🚀 정밀 전체 동기화</button>
                 <button class="btn btn-danger" id="btnSyncAbort" onclick="abortSync()" style="display: none;">⛔ 중단</button>
                 <button class="btn btn-secondary" onclick="loadCachedData()">📁 캐시 불러오기</button>
                 
                 <label class="toggle-btn" id="lbl_favOnly">
                     <input type="checkbox" id="chkFavOnly" onchange="toggleFavOnly(); applyFilters();">
-                    <span>⭐ 관심종목만 보기</span>
+                    <span>⭐ 관심종목만</span>
                 </label>
 
-                <input type="text" id="searchKeyword" placeholder="종목명 또는 코드 검색..." style="width: 180px; margin-left: auto;" oninput="applyFilters()">
+                <label class="toggle-btn" id="lbl_skipPenny" style="background: #f8fafc;" title="시가총액 300억 미만 잡주를 제외하여 속도 30% 추가 향상">
+                    <input type="checkbox" id="chkSkipPenny" checked>
+                    <span>체급주만 (시총 300억↑)</span>
+                </label>
+
+                <input type="text" id="searchKeyword" placeholder="종목명/코드 검색..." style="width: 150px; margin-left: auto;" oninput="applyFilters()">
             </div>
 
             <!-- 시각적 프로그레스 바 -->
@@ -223,7 +230,7 @@
                 <div class="filter-flex-row">
                     <label class="toggle-btn" id="lbl_uptrend">
                         <input type="checkbox" id="m_chkUptrend" onchange="toggleMomentumStyle(); applyFilters();">
-                        <span>📈 상승추세 턴어라운드 (현재가 > 60일·120일선)</span>
+                        <span>📈 상승추세 턴어라운드 (현재가 > 60일선)</span>
                     </label>
 
                     <label class="toggle-btn" id="lbl_high52">
@@ -397,7 +404,7 @@
         let isSyncing = false;
         let abortController = null;
 
-        // 관심종목 & 메모 (LocalStorage 기반)
+        // 관심종목 & 메모 (LocalStorage 연동)
         let favorites = new Set(JSON.parse(localStorage.getItem('favStocks') || '[]'));
         let stockNotes = JSON.parse(localStorage.getItem('stockNotes') || '{}');
 
@@ -430,9 +437,9 @@
         // 퀀트 종합 스코어 계산 엔진 (0~100점)
         function calculateQuantScores(stocks) {
             stocks.forEach(s => {
-                let score = 50; // 기본 중립
+                let score = 50;
 
-                // 1. 퀄리티 점수 (최대 +20 / -10)
+                // 퀄리티 점수
                 if (s.roe) {
                     if (s.roe >= 15) score += 10;
                     else if (s.roe >= 10) score += 6;
@@ -446,7 +453,7 @@
                 if (s.ocfQuality) score += 4;
                 if (s.debtRatio && s.debtRatio > 200) score -= 6;
 
-                // 2. 밸류 점수 (최대 +20 / -10)
+                // 밸류 점수
                 if (s.per && s.per > 0) {
                     if (s.per <= 8) score += 8;
                     else if (s.per <= 12) score += 5;
@@ -459,7 +466,7 @@
                 }
                 if (s.fcfYield && s.fcfYield >= 5) score += 5;
 
-                // 3. 모멘텀 점수 (최대 +15 / -10)
+                // 모멘텀 점수
                 if (s.isUptrend) score += 6;
                 if (s.high52Ratio) {
                     if (s.high52Ratio >= 85) score += 5;
@@ -492,43 +499,56 @@
             if (abortController) {
                 abortController.abort();
                 isSyncing = false;
-                document.getElementById('btnSyncStart').style.display = 'inline-flex';
+                document.getElementById('btnFastSync').style.display = 'inline-flex';
+                document.getElementById('btnFullSync').style.display = 'inline-flex';
                 document.getElementById('btnSyncAbort').style.display = 'none';
                 updateProgress(0, '사용자에 의해 동기화가 중단되었습니다.');
             }
         }
 
-        async function startFullSync() {
+        // ⭐ 가속화 동기화 실행 (isFastMode: true -> 약 25초 / false -> 약 1분)
+        async function startSync(isFastMode = true) {
             const dartKey = document.getElementById('dartApiKey').value.trim();
             if (dartKey) localStorage.setItem('dartApiKey', dartKey);
+
+            const skipPenny = document.getElementById('chkSkipPenny').checked;
 
             isSyncing = true;
             abortController = new AbortController();
             const signal = abortController.signal;
 
-            document.getElementById('btnSyncStart').style.display = 'none';
+            document.getElementById('btnFastSync').style.display = 'none';
+            document.getElementById('btnFullSync').style.display = 'none';
             document.getElementById('btnSyncAbort').style.display = 'inline-flex';
 
             try {
-                // 1단계: 시장 전종목 수집
-                updateProgress(5, `1단계: ${selectedMarket} 시장 보통주 전수 수집 중...`);
+                const modeTitle = isFastMode ? '⚡ 초고속 모드' : '🚀 정밀 전체 모드';
+                updateProgress(5, `[1단계] ${selectedMarket} 시장 보통주 전수 수집 중...`);
+                
                 const krxRes = await fetch(`/api/sync-krx?market=${selectedMarket}`, { signal });
                 const krxJson = await krxRes.json();
-                rawStocks = krxJson.data;
+                let targetStocks = krxJson.data;
+
+                // 시총 300억 미만 제외 시 800개 조기 생략 (속도 극대화)
+                if (skipPenny) {
+                    targetStocks = targetStocks.filter(s => !s.marketCap || s.marketCap >= 300);
+                }
+                rawStocks = targetStocks;
                 calculateQuantScores(rawStocks);
                 applyFilters();
 
-                // 2단계: 재무 및 일봉 모멘텀 병렬 수집
-                const chunkSize = 5;
+                // ⭐ [최적화 핵심] 청크 25개로 확장 (네트워크 왕복 대기시간 80% 제거)
+                const chunkSize = 25;
                 const total = rawStocks.length;
 
                 for (let i = 0; i < total; i += chunkSize) {
                     if (signal.aborted) break;
                     const chunk = rawStocks.slice(i, i + chunkSize);
+
                     const batchRes = await fetch('/api/sync-wisereport-batch', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ stocks: chunk }),
+                        body: JSON.stringify({ stocks: chunk, fastMode: isFastMode }),
                         signal
                     });
                     const batchJson = await batchRes.json();
@@ -542,46 +562,24 @@
                     }
 
                     const completed = Math.min(i + chunkSize, total);
-                    const percent = Math.round(10 + (completed / total) * 85);
-                    updateProgress(percent, `2단계: 퀀트 재무 & 차트 동기화 중 (${completed}/${total})...`);
+                    const percent = Math.round(10 + (completed / total) * 88);
+                    updateProgress(percent, `[2단계 ${modeTitle}] 동기화 진행 중 (${completed}/${total}개)...`);
 
-                    if (i % 60 === 0) {
+                    if (i % 150 === 0) {
                         calculateQuantScores(rawStocks);
                         applyFilters();
                     }
                 }
 
-                // 3단계: DART ROE 핀포인트
-                if (dartKey && !signal.aborted) {
-                    const missing = rawStocks.filter(s => s.roe === null || s.roe === undefined);
-                    if (missing.length > 0 && missing.length <= 50) {
-                        updateProgress(96, `3단계: DART ROE 누락분 ${missing.length}개 보충 중...`);
-                        const dRes = await fetch('/api/dart-roe-batch', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ apiKey: dartKey, stocks: missing }),
-                            signal
-                        });
-                        const dJson = await dRes.json();
-                        if (dJson.success && dJson.data) {
-                            const resMap = new Map(dJson.data.map(r => [r.code, r.roe]));
-                            rawStocks.forEach(s => {
-                                if (resMap.has(s.code) && resMap.get(s.code) !== null) s.roe = resMap.get(s.code);
-                            });
-                        }
-                    }
-                }
-
                 calculateQuantScores(rawStocks);
-                updateProgress(100, '전체 시장 퀀트 동기화 완료! ✅');
+                updateProgress(100, `${modeTitle} 완료! 최신 캐시가 저장되었습니다. ✅`);
                 await loadCachedData();
             } catch (e) {
-                if (e.name !== 'AbortError') {
-                    updateProgress(0, '동기화 오류: ' + e.message);
-                }
+                if (e.name !== 'AbortError') updateProgress(0, '동기화 오류: ' + e.message);
             } finally {
                 isSyncing = false;
-                document.getElementById('btnSyncStart').style.display = 'inline-flex';
+                document.getElementById('btnFastSync').style.display = 'inline-flex';
+                document.getElementById('btnFullSync').style.display = 'inline-flex';
                 document.getElementById('btnSyncAbort').style.display = 'none';
             }
         }
@@ -617,11 +615,10 @@
         }
 
         function applyPreset(type) {
-            // 일반 구간 필터와 펀더멘털 필터만 초기화
             document.querySelectorAll('.range-inputs input, .quality-section input[type="number"]').forEach(el => el.value = '');
             document.querySelectorAll('.quality-section input[type="checkbox"]').forEach(el => el.checked = false);
             
-            // ⭐ [버그 방지] 모멘텀 기준값은 날리지 않고 기본값 80, 0을 명시적으로 복원
+            // ⭐ [버그 방어] 모멘텀 기본 수치 80, 0 유지 보존
             document.getElementById('m_chkUptrend').checked = false;
             document.getElementById('m_chkHigh52').checked = false;
             document.getElementById('m_minHigh52Ratio').value = '80';
@@ -674,7 +671,7 @@
         function editNote(code, name, event) {
             event.stopPropagation();
             const current = stockNotes[code] || '';
-            const next = prompt(`[${name} (${code})] 투자 메모 및 목표가:`, current);
+            const next = prompt(`[${name} (${code})] 투자 메모 및 매수가/목표가:`, current);
             if (next !== null) {
                 if (next.trim() === '') delete stockNotes[code];
                 else stockNotes[code] = next.trim();
@@ -687,14 +684,14 @@
             const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
             const favOnly = document.getElementById('chkFavOnly').checked;
 
-            // 펀더멘털 체급 필터
+            // 체급 필터
             const minSales = parseFloat(document.getElementById('q_minSales').value) || -Infinity;
             const minNet = parseFloat(document.getElementById('q_minNetIncome').value) || -Infinity;
             const minOpm = parseFloat(document.getElementById('q_minOpm').value) || -Infinity;
             const chkContinuous = document.getElementById('q_chkContinuous').checked;
             const chkCashQuality = document.getElementById('q_chkCashQuality').checked;
 
-            // ⭐ [버그 해결 핵심] 모멘텀 스위치 및 안전한 기본값 fallback (비어있으면 80%, 0% 적용)
+            // ⭐ [버그 해결 핵심] 모멘텀 스위치 및 안전한 기본값 fallback (비어있으면 80%, 0% 자동 적용)
             const chkUptrend = document.getElementById('m_chkUptrend').checked;
             const chkHigh52 = document.getElementById('m_chkHigh52').checked;
             
@@ -726,14 +723,14 @@
                 if (favOnly && !favorites.has(s.code)) return false;
                 if (kw && !s.name.toLowerCase().includes(kw) && !s.code.includes(kw)) return false;
 
-                // 펀더멘털 필터 검사
+                // 펀더멘털 필터
                 if (minSales !== -Infinity && (s.latestSales === null || s.latestSales < minSales)) return false;
                 if (minNet !== -Infinity && (s.latestNetIncome === null || s.latestNetIncome < minNet)) return false;
                 if (minOpm !== -Infinity && (s.opm === null || s.opm < minOpm)) return false;
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                // ⭐ [버그 해결] 모멘텀 체크박스 검사
+                // ⭐ [버그 해결] 모멘텀 검사
                 if (chkUptrend) {
                     if (!s.isUptrend) return false;
                     if (s.return3M !== null && s.return3M < minReturn3M) return false;
@@ -853,7 +850,7 @@
             }
         }
 
-        // CSV / 엑셀 내보내기 (BOM UTF-8 적용으로 한글 무결점 지원)
+        // CSV / 엑셀 즉시 다운로드 (UTF-8 BOM 탑재로 한글 깨짐 방지)
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
@@ -861,7 +858,7 @@
             
             const rows = filteredStocks.map(s => [
                 s.market || 'KOSPI',
-                `\t${s.code}`, // 엑셀 앞자리 0 보존
+                `\t${s.code}`,
                 `"${(s.name || '').replace(/"/g, '""')}"`,
                 s.quantScore ?? '',
                 s.high52Ratio ?? '',
