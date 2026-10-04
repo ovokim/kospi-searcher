@@ -40,7 +40,7 @@ function parseFinNumber(valStr) {
 function isPureStock(item) {
     const name = item.stockName || item.name || '';
     const code = item.itemCode || item.code || '';
-    if (/[0-9][0-9][0-9][0-9][0-9][1-9A-Z]$/.test(code)) return false; // 우선주 제외
+    if (/[0-9][0-9][0-9][0-9][0-9][1-9A-Z]$/.test(code)) return false;
     const excludeKeywords = ['스팩', '우', '우B', '우C', '리츠', 'ETF', 'ETN', '인프라', '펀드', '투융자'];
     for (const kw of excludeKeywords) {
         if (name.endsWith(kw) || name.includes(kw + ' ') || name.includes(' ' + kw)) return false;
@@ -48,6 +48,7 @@ function isPureStock(item) {
     return true;
 }
 
+// ⭐ [업그레이드] WICS 세부종류 및 거래소 업종까지 동시 파싱
 function parseWiseReportHtml(html) {
     const years = [];
     const theadMatch = /<thead[^>]*>([\s\S]*?)<\/thead>/i.exec(html);
@@ -80,10 +81,25 @@ function parseWiseReportHtml(html) {
             rowData[title] = vals;
         }
     }
-    return { years, rowData };
+
+    // ⭐ WICS 세부종류 파싱 (예: WICS : 반도체와반도체장비)
+    let subSector = null;
+    const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,]+)/i.exec(html);
+    if (wicsMatch) {
+        subSector = wicsMatch[1].replace(/&nbsp;/g, '').replace(/[.;]+$/, '').trim();
+    }
+
+    // ⭐ 거래소 업종 파싱 (예: KOSPI : 전기전자)
+    let sector = null;
+    const sectorMatch = /(?:KOSPI|KOSDAQ)\s*:\s*([^<\r\n\t&;,]+)/i.exec(html);
+    if (sectorMatch) {
+        sector = sectorMatch[1].replace(/&nbsp;/g, '').replace(/[.;]+$/, '').trim();
+    }
+
+    return { years, rowData, sector, subSector };
 }
 
-// 1. KOSPI & KOSDAQ 보통주 통합 수집 (약 2~3초 완료)
+// 1. 보통주 수집
 app.get('/api/sync-krx', async (req, res) => {
     const targetMarket = (req.query.market || 'ALL').toUpperCase();
     try {
@@ -106,6 +122,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             code: s.itemCode,
                             name: s.stockName,
                             market: mkt,
+                            sector: null,
+                            subSector: null,
                             price: parseFinNumber(s.closePrice),
                             changeRate: parseFinNumber(s.fluctuationsRatio),
                             marketCap: parseFinNumber(s.marketValue),
@@ -152,6 +170,8 @@ app.get('/api/sync-krx', async (req, res) => {
                     if (os) {
                         return {
                             ...ns,
+                            sector: os.sector || ns.sector,
+                            subSector: os.subSector || ns.subSector,
                             latestSales: os.latestSales,
                             latestNetIncome: os.latestNetIncome,
                             opm: os.opm,
@@ -192,7 +212,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 고속 병렬 수집
+// 2. WiseReport 퀀트 재무 + 일봉 차트 + 세부종류 병렬 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -201,12 +221,11 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
     const results = await Promise.all(stocks.map(async (stk) => {
         try {
-            // ⭐ [최적화 1] 캔들 130일 수집 (120일선 및 3M수익률 계산 최적화)
             const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
             const wiseUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
 
-            // ⭐ [최적화 2] fastMode(초고속 모드)이고 이미 재무가 있으면 WiseReport HTML 생략
-            const needWiseReport = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
+            // fastMode이고 이미 재무와 세부업종이 있으면 WiseReport 생략
+            const needWiseReport = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined && stk.subSector);
 
             const fetchTasks = [
                 fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) })
@@ -221,7 +240,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
             let finData = {};
             if (wiseText) {
-                const { rowData } = parseWiseReportHtml(wiseText);
+                const { rowData, sector, subSector } = parseWiseReportHtml(wiseText);
                 const getAllValues = (candidateKeys) => {
                     for (const key of candidateKeys) {
                         const matchedRow = Object.keys(rowData).find(k => k.includes(key));
@@ -250,14 +269,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 const latestNet = latest(netVals);
                 const prevNet = prev(netVals);
                 const latestOp = latest(opVals);
-                const latestDebt = latest(debtVals);
-                const latestOcf = latest(ocfVals);
-                const latestFcf = latest(fcfVals);
-                const latestPer = latest(perVals);
-                const latestPbr = latest(pbrVals);
-                const latestRoe = latest(roeVals);
-                const latestDivYield = latest(divYieldVals);
-                const latestDivPayout = latest(divPayoutVals);
 
                 const isSalesCont = salesVals.length >= 3 &&
                     salesVals[salesVals.length - 1] > salesVals[salesVals.length - 2] &&
@@ -269,26 +280,28 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 let opm = (latestOp !== null && latestSales > 0) ? parseFloat(((latestOp / latestSales) * 100).toFixed(2)) : null;
                 let salesGrowth = (latestSales !== null && prevSales > 0) ? parseFloat((((latestSales - prevSales) / prevSales) * 100).toFixed(2)) : null;
                 let netIncomeGrowth = (latestNet !== null && Math.abs(prevNet) > 0) ? parseFloat((((latestNet - prevNet) / Math.abs(prevNet)) * 100).toFixed(2)) : null;
-                let fcfYield = (latestFcf !== null && stk.marketCap > 0) ? parseFloat(((latestFcf / stk.marketCap) * 100).toFixed(2)) : null;
+                let fcfYield = (latest(fcfVals) !== null && stk.marketCap > 0) ? parseFloat(((latest(fcfVals) / stk.marketCap) * 100).toFixed(2)) : null;
 
                 finData = {
+                    sector: sector || stk.sector,
+                    subSector: subSector || stk.subSector,
                     latestSales,
                     latestNetIncome: latestNet,
                     opm,
                     isContinuousGrowth: isSalesCont && isNetCont,
-                    ocfQuality: (latestOcf !== null && latestNet > 0) ? (latestOcf >= latestNet) : false,
-                    per: latestPer,
-                    pbr: latestPbr,
-                    roe: latestRoe,
-                    fcf: latestFcf,
+                    ocfQuality: (latest(ocfVals) !== null && latestNet > 0) ? (latest(ocfVals) >= latestNet) : false,
+                    per: latest(perVals),
+                    pbr: latest(pbrVals),
+                    roe: latest(roeVals),
+                    fcf: latest(fcfVals),
                     fcfYield,
                     salesGrowth,
                     netIncomeGrowth,
-                    debtRatio: latestDebt,
-                    ocf: latestOcf,
-                    peg: (latestPer > 0 && netIncomeGrowth > 0) ? parseFloat((latestPer / netIncomeGrowth).toFixed(2)) : null,
-                    dividendYield: latestDivYield,
-                    dividendPayout: latestDivPayout
+                    debtRatio: latest(debtVals),
+                    ocf: latest(ocfVals),
+                    peg: (latest(perVals) > 0 && netIncomeGrowth > 0) ? parseFloat((latest(perVals) / netIncomeGrowth).toFixed(2)) : null,
+                    dividendYield: latest(divYieldVals),
+                    dividendPayout: latest(divPayoutVals)
                 };
             }
 
@@ -447,7 +460,7 @@ app.get('/api/stock-report', async (req, res) => {
         const basic = await naverResp.json();
         const wiseHtml = await wiseResp.text();
         const chartText = await chartResp.text();
-        const { years, rowData } = parseWiseReportHtml(wiseHtml);
+        const { years, rowData, sector, subSector } = parseWiseReportHtml(wiseHtml);
 
         const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
         let high52 = '-';
@@ -516,6 +529,7 @@ app.get('/api/stock-report', async (req, res) => {
         .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
         .title h1 { margin: 0; font-size: 26px; color: #0f172a; display: flex; align-items: center; gap: 10px; }
         .code-badge { font-size: 13px; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; }
+        .sector-badge { font-size: 13px; background: #f1f5f9; color: #475569; padding: 4px 10px; border-radius: 6px; border: 1px solid #cbd5e1; }
         .btn-group { display: flex; gap: 8px; }
         .btn { padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); text-decoration: none; font-size: 12px; }
         .btn-primary { background: var(--primary); color: white; border: none; }
@@ -538,7 +552,11 @@ app.get('/api/stock-report', async (req, res) => {
     <div class="container">
         <div class="header">
             <div class="title">
-                <h1>${stockName} <span class="code-badge">${code}</span></h1>
+                <h1>
+                    ${stockName} <span class="code-badge">${code}</span>
+                    <span class="sector-badge">업종: ${sector || '-'}</span>
+                    <span class="sector-badge" style="background:#fef3c7; color:#92400e; border-color:#fde68a;">WICS: ${subSector || '-'}</span>
+                </h1>
                 <p style="margin: 6px 0 0; color: #64748b; font-size: 12px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
             </div>
             <div class="btn-group">
@@ -626,9 +644,7 @@ async function runBackgroundAutoSync() {
                 page++;
             }
         }
-        console.log(`[자동스케줄러] 1단계 대상: ${allStocks.length}개 수집 완료`);
 
-        // 25개씩 청크로 일봉 및 재무 고속 수집
         const chunkSize = 25;
         const total = allStocks.length;
         const enriched = [];
@@ -674,7 +690,6 @@ async function runBackgroundAutoSync() {
             enriched.push(...chunkResults);
         }
 
-        // 기존 캐시의 재무 데이터와 병합 보존
         if (fs.existsSync(CACHE_FILE)) {
             try {
                 const oldCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
@@ -698,7 +713,7 @@ let lastAutoSyncDate = '';
 setInterval(() => {
     const now = new Date();
     const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const kstNow = new Date(utc + (9 * 3600000)); // UTC+9 한국표준시
+    const kstNow = new Date(utc + (9 * 3600000));
     const day = kstNow.getDay();
     const hour = kstNow.getHours();
     const min = kstNow.getMinutes();

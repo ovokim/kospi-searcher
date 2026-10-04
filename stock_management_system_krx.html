@@ -98,7 +98,7 @@
         th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
         th { background: #f8fafc; font-weight: 700; color: #475569; cursor: pointer; user-select: none; }
         th:hover { background: #f1f5f9; }
-        td:nth-child(1), th:nth-child(1), td:nth-child(2), th:nth-child(2), td:nth-child(3), th:nth-child(3) { text-align: left; }
+        td:nth-child(1), th:nth-child(1), td:nth-child(2), th:nth-child(2), td:nth-child(3), th:nth-child(3), td:nth-child(4), th:nth-child(4), td:nth-child(5), th:nth-child(5) { text-align: left; }
         
         .stock-link { color: var(--primary); text-decoration: none; font-weight: 700; cursor: pointer; }
         .stock-link:hover { text-decoration: underline; }
@@ -121,6 +121,9 @@
         .badge-gold { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
         .badge-kospi { background: #e0f2fe; color: #0369a1; font-size: 9px; padding: 1px 4px; }
         .badge-kosdaq { background: #f3e8ff; color: #7e22ce; font-size: 9px; padding: 1px 4px; }
+        
+        /* 세부종류 배지 스타일 */
+        .badge-subsector { background: #f1f5f9; color: #334155; padding: 2px 7px; border-radius: 6px; font-weight: 600; font-size: 11px; border: 1px solid #cbd5e1; }
         
         .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
         .page-btn { padding: 6px 12px; border: 1px solid var(--border); background: white; border-radius: 6px; cursor: pointer; font-size: 12px; }
@@ -164,7 +167,7 @@
                     <span>체급주만 (시총 300억↑)</span>
                 </label>
 
-                <input type="text" id="searchKeyword" placeholder="종목명/코드 검색..." style="width: 150px; margin-left: auto;" oninput="applyFilters()">
+                <input type="text" id="searchKeyword" placeholder="종목명/코드/세부업종 검색..." style="width: 170px; margin-left: auto;" oninput="applyFilters()">
             </div>
 
             <!-- 시각적 프로그레스 바 -->
@@ -367,6 +370,8 @@
                         <th style="width: 32px;">메모</th>
                         <th onclick="sortTable('code')">코드</th>
                         <th onclick="sortTable('name')">종목명 (리포트)</th>
+                        <!-- ⭐ 세부종류(WICS) 컬럼 추가 및 정렬 지원 -->
+                        <th onclick="sortTable('subSector')">세부종류 (WICS)</th>
                         <th onclick="sortTable('quantScore')">퀀트점수</th>
                         <th onclick="sortTable('high52Ratio')">52주고점대비</th>
                         <th onclick="sortTable('return3M')">3개월수익률</th>
@@ -404,7 +409,6 @@
         let isSyncing = false;
         let abortController = null;
 
-        // 관심종목 & 메모 (LocalStorage 연동)
         let favorites = new Set(JSON.parse(localStorage.getItem('favStocks') || '[]'));
         let stockNotes = JSON.parse(localStorage.getItem('stockNotes') || '{}');
 
@@ -434,7 +438,6 @@
             } catch (e) { }
         }
 
-        // 퀀트 종합 스코어 계산 엔진 (0~100점)
         function calculateQuantScores(stocks) {
             stocks.forEach(s => {
                 let score = 50;
@@ -506,7 +509,6 @@
             }
         }
 
-        // ⭐ 가속화 동기화 실행 (isFastMode: true -> 약 25초 / false -> 약 1분)
         async function startSync(isFastMode = true) {
             const dartKey = document.getElementById('dartApiKey').value.trim();
             if (dartKey) localStorage.setItem('dartApiKey', dartKey);
@@ -529,7 +531,6 @@
                 const krxJson = await krxRes.json();
                 let targetStocks = krxJson.data;
 
-                // 시총 300억 미만 제외 시 800개 조기 생략 (속도 극대화)
                 if (skipPenny) {
                     targetStocks = targetStocks.filter(s => !s.marketCap || s.marketCap >= 300);
                 }
@@ -537,7 +538,6 @@
                 calculateQuantScores(rawStocks);
                 applyFilters();
 
-                // ⭐ [최적화 핵심] 청크 25개로 확장 (네트워크 왕복 대기시간 80% 제거)
                 const chunkSize = 25;
                 const total = rawStocks.length;
 
@@ -618,7 +618,6 @@
             document.querySelectorAll('.range-inputs input, .quality-section input[type="number"]').forEach(el => el.value = '');
             document.querySelectorAll('.quality-section input[type="checkbox"]').forEach(el => el.checked = false);
             
-            // ⭐ [버그 방어] 모멘텀 기본 수치 80, 0 유지 보존
             document.getElementById('m_chkUptrend').checked = false;
             document.getElementById('m_chkHigh52').checked = false;
             document.getElementById('m_minHigh52Ratio').value = '80';
@@ -684,14 +683,12 @@
             const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
             const favOnly = document.getElementById('chkFavOnly').checked;
 
-            // 체급 필터
             const minSales = parseFloat(document.getElementById('q_minSales').value) || -Infinity;
             const minNet = parseFloat(document.getElementById('q_minNetIncome').value) || -Infinity;
             const minOpm = parseFloat(document.getElementById('q_minOpm').value) || -Infinity;
             const chkContinuous = document.getElementById('q_chkContinuous').checked;
             const chkCashQuality = document.getElementById('q_chkCashQuality').checked;
 
-            // ⭐ [버그 해결 핵심] 모멘텀 스위치 및 안전한 기본값 fallback (비어있으면 80%, 0% 자동 적용)
             const chkUptrend = document.getElementById('m_chkUptrend').checked;
             const chkHigh52 = document.getElementById('m_chkHigh52').checked;
             
@@ -721,16 +718,22 @@
             filteredStocks = rawStocks.filter(s => {
                 if (selectedMarket !== 'ALL' && s.market && s.market !== selectedMarket) return false;
                 if (favOnly && !favorites.has(s.code)) return false;
-                if (kw && !s.name.toLowerCase().includes(kw) && !s.code.includes(kw)) return false;
 
-                // 펀더멘털 필터
+                // ⭐ [업그레이드] 검색창에 종목명, 코드뿐만 아니라 업종/세부종류까지 동시 검색
+                if (kw) {
+                    const matchName = s.name && s.name.toLowerCase().includes(kw);
+                    const matchCode = s.code && s.code.includes(kw);
+                    const matchSector = s.sector && s.sector.toLowerCase().includes(kw);
+                    const matchSub = s.subSector && s.subSector.toLowerCase().includes(kw);
+                    if (!matchName && !matchCode && !matchSector && !matchSub) return false;
+                }
+
                 if (minSales !== -Infinity && (s.latestSales === null || s.latestSales < minSales)) return false;
                 if (minNet !== -Infinity && (s.latestNetIncome === null || s.latestNetIncome < minNet)) return false;
                 if (minOpm !== -Infinity && (s.opm === null || s.opm < minOpm)) return false;
                 if (chkContinuous && !s.isContinuousGrowth) return false;
                 if (chkCashQuality && !s.ocfQuality) return false;
 
-                // ⭐ [버그 해결] 모멘텀 검사
                 if (chkUptrend) {
                     if (!s.isUptrend) return false;
                     if (s.return3M !== null && s.return3M < minReturn3M) return false;
@@ -810,6 +813,8 @@
                         ${s.isUptrend ? '<span class="badge badge-green" title="상승추세">📈 상승</span>' : ''}
                         ${(s.high52Ratio || 0) >= 80 ? '<span class="badge badge-purple" title="신고가 근접">🎯 신고가</span>' : ''}
                     </td>
+                    <!-- ⭐ 세부종류(WICS) 배지 출력 -->
+                    <td><span class="badge-subsector">${s.subSector || s.sector || '-'}</span></td>
                     <td><span class="score-pill ${scoreClass}">${s.quantScore ?? '-'}점</span></td>
                     <td><strong>${s.high52Ratio !== null ? s.high52Ratio + '%' : '-'}</strong></td>
                     <td class="${(s.return3M || 0) > 0 ? 'pos' : 'neg'}"><strong>${s.return3M !== null ? (s.return3M > 0 ? '+' : '') + s.return3M + '%' : '-'}</strong></td>
@@ -850,16 +855,17 @@
             }
         }
 
-        // CSV / 엑셀 즉시 다운로드 (UTF-8 BOM 탑재로 한글 깨짐 방지)
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
-            const headers = ['시장', '종목코드', '종목명', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
+            const headers = ['시장', '종목코드', '종목명', '업종', '세부종류(WICS)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
             
             const rows = filteredStocks.map(s => [
                 s.market || 'KOSPI',
                 `\t${s.code}`,
                 `"${(s.name || '').replace(/"/g, '""')}"`,
+                `"${(s.sector || '').replace(/"/g, '""')}"`,
+                `"${(s.subSector || '').replace(/"/g, '""')}"`,
                 s.quantScore ?? '',
                 s.high52Ratio ?? '',
                 s.return3M ?? '',
