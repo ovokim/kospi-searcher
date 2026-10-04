@@ -8,7 +8,7 @@ try {
     AdmZip = require('adm-zip');
     xml2js = require('xml2js');
 } catch (e) {
-    console.log('[안내] adm-zip 또는 xml2js 미설치 상태');
+    console.log('[안내] adm-zip 또는 xml2js 미설치 상태 (DART API 사용 시 설치 필요)');
 }
 
 const app = express();
@@ -23,12 +23,12 @@ app.get('/', (req, res) => {
 });
 
 const FETCH_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 };
 
 function parseFinNumber(valStr) {
     if (!valStr) return null;
-    let s = valStr.replace(/,/g, '').trim();
+    let s = valStr.toString().replace(/,/g, '').trim();
     if (s === '' || s === '-' || s === 'N/A') return null;
     if (s.startsWith('(') && s.endsWith(')')) {
         s = '-' + s.slice(1, -1);
@@ -40,7 +40,7 @@ function parseFinNumber(valStr) {
 function isPureStock(item) {
     const name = item.stockName || item.name || '';
     const code = item.itemCode || item.code || '';
-    if (/[0-9][0-9][0-9][0-9][0-9][1-9A-Z]$/.test(code)) return false;
+    if (/[0-9][0-9][0-9][0-9][0-9][1-9A-Z]$/.test(code)) return false; // 우선주 제외
     const excludeKeywords = ['스팩', '우', '우B', '우C', '리츠', 'ETF', 'ETN', '인프라', '펀드', '투융자'];
     for (const kw of excludeKeywords) {
         if (name.endsWith(kw) || name.includes(kw + ' ') || name.includes(' ' + kw)) return false;
@@ -48,7 +48,6 @@ function isPureStock(item) {
     return true;
 }
 
-// ⭐ [핵심 수정] th와 td 태그를 모두 완벽하게 파싱하는 무결점 와이즈리포트 파서
 function parseWiseReportHtml(html) {
     const years = [];
     const theadMatch = /<thead[^>]*>([\s\S]*?)<\/thead>/i.exec(html);
@@ -71,75 +70,79 @@ function parseWiseReportHtml(html) {
     let trMatch;
     while ((trMatch = trRegex.exec(html)) !== null) {
         const trContent = trMatch[1];
-        // 모든 셀(th, td)을 순서대로 추출
         const cells = [...trContent.matchAll(/<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi)];
         if (cells.length < 2) continue;
 
-        // 첫 번째 셀은 무조건 행 제목 (ROE, PER, 매출액 등)
         const title = cells[0][2].replace(/<[^>]+>/g, '').replace(/\s+/g, '').trim();
-        // 나머지 셀은 연도별 재무 수치
         const vals = cells.slice(1).map(c => c[2].replace(/<[^>]+>/g, '').trim());
 
         if (title && vals.length > 0) {
             rowData[title] = vals;
         }
     }
-
     return { years, rowData };
 }
 
-// 1. KOSPI 수집
+// 1. KOSPI + KOSDAQ 보통주 통합 수집
 app.get('/api/sync-krx', async (req, res) => {
+    const targetMarket = (req.query.market || 'ALL').toUpperCase(); // ALL, KOSPI, KOSDAQ
     try {
-        console.log('[KOSPI] 종목 수집 시작...');
-        let page = 1;
+        console.log(`[시장 수집 시작] 대상: ${targetMarket}`);
+        const markets = targetMarket === 'ALL' ? ['KOSPI', 'KOSDAQ'] : [targetMarket];
         let allStocks = [];
-        while (true) {
-            const url = `https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page=${page}&pageSize=100`;
-            const resp = await fetch(url, { headers: FETCH_HEADERS });
-            const data = await resp.json();
-            const list = data.stocks || [];
-            if (!list || list.length === 0) break;
 
-            for (const s of list) {
-                if (isPureStock(s)) {
-                    allStocks.push({
-                        code: s.itemCode,
-                        name: s.stockName,
-                        price: parseFinNumber(s.closePrice),
-                        changeRate: parseFinNumber(s.fluctuationsRatio),
-                        marketCap: parseFinNumber(s.marketValue),
-                        latestSales: null,
-                        latestNetIncome: null,
-                        opm: null,
-                        isContinuousGrowth: false,
-                        ocfQuality: false,
-                        high52: null,
-                        low52: null,
-                        high52Ratio: null,
-                        ma60: null,
-                        ma120: null,
-                        return3M: null,
-                        isUptrend: false,
-                        per: null,
-                        pbr: null,
-                        roe: null,
-                        fcf: null,
-                        fcfYield: null,
-                        salesGrowth: null,
-                        netIncomeGrowth: null,
-                        debtRatio: null,
-                        ocf: null,
-                        peg: null,
-                        dividendYield: null,
-                        dividendPayout: null
-                    });
+        for (const mkt of markets) {
+            let page = 1;
+            while (true) {
+                const url = `https://m.stock.naver.com/api/stocks/marketValue/${mkt}?page=${page}&pageSize=100`;
+                const resp = await fetch(url, { headers: FETCH_HEADERS });
+                const data = await resp.json();
+                const list = data.stocks || [];
+                if (!list || list.length === 0) break;
+
+                for (const s of list) {
+                    if (isPureStock(s)) {
+                        allStocks.push({
+                            code: s.itemCode,
+                            name: s.stockName,
+                            market: mkt,
+                            price: parseFinNumber(s.closePrice),
+                            changeRate: parseFinNumber(s.fluctuationsRatio),
+                            marketCap: parseFinNumber(s.marketValue),
+                            latestSales: null,
+                            latestNetIncome: null,
+                            opm: null,
+                            isContinuousGrowth: false,
+                            ocfQuality: false,
+                            high52: null,
+                            low52: null,
+                            high52Ratio: null,
+                            ma60: null,
+                            ma120: null,
+                            return3M: null,
+                            isUptrend: false,
+                            per: null,
+                            pbr: null,
+                            roe: null,
+                            fcf: null,
+                            fcfYield: null,
+                            salesGrowth: null,
+                            netIncomeGrowth: null,
+                            debtRatio: null,
+                            ocf: null,
+                            peg: null,
+                            dividendYield: null,
+                            dividendPayout: null,
+                            quantScore: null
+                        });
+                    }
                 }
+                if (list.length < 100) break;
+                page++;
             }
-            if (list.length < 100) break;
-            page++;
         }
 
+        // 기존 캐시 병합 보존
         if (fs.existsSync(CACHE_FILE)) {
             try {
                 const oldCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
@@ -172,7 +175,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             ocf: os.ocf,
                             peg: os.peg,
                             dividendYield: os.dividendYield,
-                            dividendPayout: os.dividendPayout
+                            dividendPayout: os.dividendPayout,
+                            quantScore: os.quantScore
                         };
                     }
                     return ns;
@@ -183,7 +187,7 @@ app.get('/api/sync-krx', async (req, res) => {
         fs.writeFileSync(CACHE_FILE, JSON.stringify(allStocks, null, 2), 'utf8');
         res.json({ success: true, count: allStocks.length, data: allStocks });
     } catch (err) {
-        console.error('[KOSPI 수집 실패]', err.message);
+        console.error('[시장 수집 실패]', err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -201,12 +205,11 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=260&requestType=0`;
 
             const [wiseResp, chartResp] = await Promise.all([
-                fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }),
-                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
+                fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
+                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
             ]);
 
             const [wiseText, chartText] = await Promise.all([wiseResp.text(), chartResp.text()]);
-
             const { rowData } = parseWiseReportHtml(wiseText);
 
             const getAllValues = (candidateKeys) => {
@@ -227,7 +230,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             const fcfVals = getAllValues(['FCF']);
             const perVals = getAllValues(['PER(배)', 'PER']);
             const pbrVals = getAllValues(['PBR(배)', 'PBR']);
-            // ROE 다중 키 탐색
             const roeVals = getAllValues(['ROE(지배)', 'ROE(%)', 'ROE']);
             const divYieldVals = getAllValues(['현금배당수익률', '배당수익률', '시가배당률']);
             const divPayoutVals = getAllValues(['현금배당성향', '배당성향']);
@@ -285,7 +287,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 peg = parseFloat((latestPer / netIncomeGrowth).toFixed(2));
             }
 
-            // 1년치 일봉 캔들 모멘텀
+            // 1년치 일봉 캔들 모멘텀 계산
             const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
             let high52 = null;
             let low52 = null;
@@ -376,24 +378,20 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
     res.json({ success: true, data: results });
 });
 
-// 3. DART ROE 고속 병렬 수집
+// 3. DART API ROE 보충
 let corpCodeMapCache = null;
 async function getDartCorpCode(apiKey, stockCode) {
-    if (corpCodeMapCache && corpCodeMapCache.has(stockCode)) {
-        return corpCodeMapCache.get(stockCode);
-    }
+    if (corpCodeMapCache && corpCodeMapCache.has(stockCode)) return corpCodeMapCache.get(stockCode);
     if (!AdmZip || !xml2js) return null;
 
     try {
         const zipUrl = `https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=${apiKey}`;
         const resp = await fetch(zipUrl, { signal: AbortSignal.timeout(15000) });
         const arrayBuffer = await resp.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        const zip = new AdmZip(buffer);
+        const zip = new AdmZip(Buffer.from(arrayBuffer));
         const xmlEntry = zip.getEntries().find(e => e.entryName.endsWith('.xml'));
         if (!xmlEntry) return null;
-        const xmlData = zip.readAsText(xmlEntry);
-        const parsed = await xml2js.parseStringPromise(xmlData);
+        const parsed = await xml2js.parseStringPromise(zip.readAsText(xmlEntry));
         const list = parsed.result.list;
         corpCodeMapCache = new Map();
         for (const item of list) {
@@ -413,10 +411,7 @@ app.post('/api/dart-roe-batch', async (req, res) => {
         return res.status(400).json({ success: false, message: 'apiKey와 stocks 필요' });
     }
 
-    if (!corpCodeMapCache) {
-        await getDartCorpCode(apiKey, '005930');
-    }
-
+    if (!corpCodeMapCache) await getDartCorpCode(apiKey, '005930');
     const targetYear = year || (new Date().getFullYear() - 1);
 
     const results = await Promise.all(stocks.map(async (stk) => {
@@ -454,21 +449,15 @@ app.post('/api/dart-roe-batch', async (req, res) => {
             const cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
             const rMap = new Map(results.filter(r => r.roe !== null).map(r => [r.code, r.roe]));
             if (rMap.size > 0) {
-                const updated = cache.map(item => {
-                    if (rMap.has(item.code)) {
-                        return { ...item, roe: rMap.get(item.code) };
-                    }
-                    return item;
-                });
+                const updated = cache.map(item => rMap.has(item.code) ? { ...item, roe: rMap.get(item.code) } : item);
                 fs.writeFileSync(CACHE_FILE, JSON.stringify(updated, null, 2), 'utf8');
             }
         } catch (e) { }
     }
-
     res.json({ success: true, data: results });
 });
 
-// 4. 실시간 심층 분석 HTML 리포트
+// 4. 단일 종목 심층 분석 리포트
 app.get('/api/stock-report', async (req, res) => {
     const code = req.query.code;
     if (!code) return res.status(400).send('종목코드가 필요합니다.');
@@ -476,20 +465,13 @@ app.get('/api/stock-report', async (req, res) => {
     try {
         const [naverResp, wiseResp, chartResp] = await Promise.all([
             fetch(`https://m.stock.naver.com/api/stock/${code}/basic`, { headers: FETCH_HEADERS }),
-            fetch(`https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${code}&fin_typ=0&freq_typ=Y`, {
-                headers: FETCH_HEADERS,
-                signal: AbortSignal.timeout(8000)
-            }),
-            fetch(`https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=260&requestType=0`, {
-                headers: FETCH_HEADERS,
-                signal: AbortSignal.timeout(8000)
-            })
+            fetch(`https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${code}&fin_typ=0&freq_typ=Y`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
+            fetch(`https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=260&requestType=0`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
         ]);
 
         const basic = await naverResp.json();
         const wiseHtml = await wiseResp.text();
         const chartText = await chartResp.text();
-
         const { years, rowData } = parseWiseReportHtml(wiseHtml);
 
         const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
@@ -520,8 +502,7 @@ app.get('/api/stock-report', async (req, res) => {
                     const r = (((cur - base60) / base60) * 100).toFixed(2);
                     return3M = (r > 0 ? '+' : '') + r + '%';
                 }
-                if (cur >= c60) trendStatus = '📈 상승추세 (60일선 위)';
-                else trendStatus = '📉 하락추세 (60일선 아래)';
+                trendStatus = cur >= c60 ? '📈 상승추세 (60일선 위)' : '📉 하락추세 (60일선 아래)';
             }
         }
 
@@ -529,7 +510,6 @@ app.get('/api/stock-report', async (req, res) => {
             '매출액', '영업이익', '당기순이익', '영업활동으로인한현금흐름', '부채비율',
             'ROE(지배)', 'ROA', 'PER', 'PBR', 'EPS(원)', 'BPS(원)', '현금배당수익률', '현금배당성향(%)'
         ];
-
         const reportData = {};
         for (const f of financialRows) {
             const key = Object.keys(rowData).find(k => k.includes(f));
@@ -548,8 +528,7 @@ app.get('/api/stock-report', async (req, res) => {
             return `<tr><td class="row-title">${k}</td>${tds}</tr>`;
         }).join('');
 
-        const html = `
-<!DOCTYPE html>
+        const html = `<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -571,7 +550,7 @@ app.get('/api/stock-report', async (req, res) => {
         .label { font-size: 11px; color: #64748b; margin-bottom: 4px; font-weight: 600; }
         .val { font-size: 18px; font-weight: 800; color: #0f172a; }
         .section-title { font-size: 16px; font-weight: 800; margin: 24px 0 10px; color: #334155; }
-        table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
         th, td { padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--border); }
         th { background: #f8fafc; font-weight: 700; color: #475569; }
         td.row-title, th:first-child { text-align: left; font-weight: 700; background: #fafafa; }
@@ -585,7 +564,7 @@ app.get('/api/stock-report', async (req, res) => {
         <div class="header">
             <div class="title">
                 <h1>${stockName} <span class="code-badge">${code}</span></h1>
-                <p style="margin: 6px 0 0; color: #64748b; font-size: 12px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 종합 밸류에이션 및 가격 모멘텀 리포트</p>
+                <p style="margin: 6px 0 0; color: #64748b; font-size: 12px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
             </div>
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="window.print()">🖨️ PDF / 인쇄</button>
@@ -617,7 +596,7 @@ app.get('/api/stock-report', async (req, res) => {
 
         <div class="footer">
             <span>데이터 출처: NAVER 금융 & WiseReport 컨센서스</span>
-            <span>KOSPI 퀀트 스크리닝 자동생성 리포트</span>
+            <span>퀀트 스크리닝 자동생성 리포트</span>
         </div>
     </div>
 </body>
@@ -640,6 +619,181 @@ app.get('/api/cached-stocks', (req, res) => {
     res.json({ success: true, count: 0, data: [] });
 });
 
+// ⭐ 6. 한국 NXT(Nextrade 20:00 마감) 대응: 평일 20:05 자동 수집 백그라운드 엔진
+async function runBackgroundAutoSync() {
+    console.log('[자동스케줄러] 평일 20:05 NXT 장 마감 후 자동 전체 동기화 시작...');
+    try {
+        const markets = ['KOSPI', 'KOSDAQ'];
+        let allStocks = [];
+
+        for (const mkt of markets) {
+            let page = 1;
+            while (true) {
+                const url = `https://m.stock.naver.com/api/stocks/marketValue/${mkt}?page=${page}&pageSize=100`;
+                const resp = await fetch(url, { headers: FETCH_HEADERS });
+                const data = await resp.json();
+                const list = data.stocks || [];
+                if (!list || list.length === 0) break;
+
+                for (const s of list) {
+                    if (isPureStock(s)) {
+                        allStocks.push({
+                            code: s.itemCode,
+                            name: s.stockName,
+                            market: mkt,
+                            price: parseFinNumber(s.closePrice),
+                            changeRate: parseFinNumber(s.fluctuationsRatio),
+                            marketCap: parseFinNumber(s.marketValue)
+                        });
+                    }
+                }
+                if (list.length < 100) break;
+                page++;
+            }
+        }
+        console.log(`[자동스케줄러] 1단계 대상 종목: ${allStocks.length}개 수집 완료`);
+
+        // 5개씩 청크로 재무/차트 수집
+        const chunkSize = 5;
+        const total = allStocks.length;
+        const enriched = [];
+
+        for (let i = 0; i < total; i += chunkSize) {
+            const chunk = allStocks.slice(i, i + chunkSize);
+            const chunkResults = await Promise.all(chunk.map(async (stk) => {
+                try {
+                    const wiseUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
+                    const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=260&requestType=0`;
+                    const [wiseResp, chartResp] = await Promise.all([
+                        fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
+                        fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
+                    ]);
+                    const [wiseText, chartText] = await Promise.all([wiseResp.text(), chartResp.text()]);
+                    const { rowData } = parseWiseReportHtml(wiseText);
+
+                    const getAll = (keys) => {
+                        for (const k of keys) {
+                            const m = Object.keys(rowData).find(x => x.includes(k));
+                            if (m) return rowData[m].map(parseFinNumber).filter(v => v !== null);
+                        }
+                        return [];
+                    };
+
+                    const sales = getAll(['매출액']);
+                    const nets = getAll(['당기순이익']);
+                    const ops = getAll(['영업이익']);
+                    const debts = getAll(['부채비율']);
+                    const ocfs = getAll(['영업활동으로인한현금흐름', '영업활동']);
+                    const fcfs = getAll(['FCF']);
+                    const pers = getAll(['PER(배)', 'PER']);
+                    const pbrs = getAll(['PBR(배)', 'PBR']);
+                    const roes = getAll(['ROE(지배)', 'ROE(%)', 'ROE']);
+                    const divs = getAll(['현금배당수익률', '배당수익률']);
+                    const pays = getAll(['현금배당성향']);
+
+                    const last = (arr) => arr.length > 0 ? arr[arr.length - 1] : null;
+                    const prev = (arr) => arr.length > 1 ? arr[arr.length - 2] : null;
+
+                    const lSales = last(sales);
+                    const pSales = prev(sales);
+                    const lNet = last(nets);
+                    const pNet = prev(nets);
+                    const lOp = last(ops);
+                    const lDebt = last(debts);
+                    const lOcf = last(ocfs);
+                    const lFcf = last(fcfs);
+                    const lPer = last(pers);
+                    const lPbr = last(pbrs);
+                    const lRoe = last(roes);
+
+                    const isContinuous = sales.length >= 3 && nets.length >= 3 &&
+                        sales[sales.length - 1] > sales[sales.length - 2] &&
+                        sales[sales.length - 2] > sales[sales.length - 3] &&
+                        nets[nets.length - 1] > nets[nets.length - 2] &&
+                        nets[nets.length - 2] > nets[nets.length - 3];
+
+                    let opm = (lOp && lSales && lSales > 0) ? parseFloat(((lOp / lSales) * 100).toFixed(2)) : null;
+                    let salesGrowth = (lSales && pSales && pSales > 0) ? parseFloat((((lSales - pSales) / pSales) * 100).toFixed(2)) : null;
+                    let netGrowth = (lNet && pNet && Math.abs(pNet) > 0) ? parseFloat((((lNet - pNet) / Math.abs(pNet)) * 100).toFixed(2)) : null;
+                    let fcfYield = (lFcf && stk.marketCap && stk.marketCap > 0) ? parseFloat(((lFcf / stk.marketCap) * 100).toFixed(2)) : null;
+
+                    const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
+                    let high52 = null, low52 = null, high52Ratio = null, return3M = null, isUptrend = false;
+                    if (candleMatches.length > 0) {
+                        const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
+                        const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
+                        const closes = candleMatches.map(c => parseFloat(c[4])).filter(v => !isNaN(v));
+                        if (highs.length > 0) high52 = Math.max(...highs);
+                        if (lows.length > 0) low52 = Math.min(...lows);
+                        const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
+                        if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
+                        if (closes.length >= 60) {
+                            const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
+                            const b60 = closes[closes.length - 60];
+                            if (b60 > 0) return3M = parseFloat((((curPrice - b60) / b60) * 100).toFixed(2));
+                            isUptrend = curPrice >= c60;
+                        }
+                    }
+
+                    return {
+                        ...stk,
+                        latestSales: lSales,
+                        latestNetIncome: lNet,
+                        opm,
+                        isContinuousGrowth: isContinuous,
+                        ocfQuality: (lOcf !== null && lNet !== null && lNet > 0) ? (lOcf >= lNet) : false,
+                        high52,
+                        low52,
+                        high52Ratio,
+                        return3M,
+                        isUptrend,
+                        per: lPer,
+                        pbr: lPbr,
+                        roe: lRoe,
+                        fcf: lFcf,
+                        fcfYield,
+                        salesGrowth,
+                        netIncomeGrowth: netGrowth,
+                        debtRatio: lDebt,
+                        ocf: lOcf,
+                        peg: (lPer && lPer > 0 && netGrowth && netGrowth > 0) ? parseFloat((lPer / netGrowth).toFixed(2)) : null,
+                        dividendYield: last(divs),
+                        dividendPayout: last(pays)
+                    };
+                } catch (e) {
+                    return stk;
+                }
+            }));
+            enriched.push(...chunkResults);
+        }
+
+        fs.writeFileSync(CACHE_FILE, JSON.stringify(enriched, null, 2), 'utf8');
+        console.log(`[자동스케줄러] ${enriched.length}개 전종목 NXT 장 마감 캐시 갱신 완료 ✅`);
+    } catch (e) {
+        console.error('[자동스케줄러 오류]', e.message);
+    }
+}
+
+// 매 분마다 검사하여 한국 시각(KST) 평일 20:05 정각 실행
+let lastAutoSyncDate = '';
+setInterval(() => {
+    const now = new Date();
+    // KST 시간 계산 (UTC+9)
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const kstNow = new Date(utc + (9 * 3600000));
+    const day = kstNow.getDay(); // 0: 일, 1~5: 월~금, 6: 토
+    const hour = kstNow.getHours();
+    const min = kstNow.getMinutes();
+    const dateStr = kstNow.toISOString().slice(0, 10);
+
+    // 평일 월~금, 20시 05분, 당일 1회만 실행
+    if (day >= 1 && day <= 5 && hour === 20 && min === 5 && lastAutoSyncDate !== dateStr) {
+        lastAutoSyncDate = dateStr;
+        runBackgroundAutoSync();
+    }
+}, 30000);
+
 app.listen(PORT, () => {
-    console.log(`🚀 KOSPI 퀀트 발굴 서버 구동 완료: http://localhost:${PORT}`);
+    console.log(`🚀 퀀트 스크리너 서버 구동 완료: http://localhost:${PORT}`);
+    console.log(`⏰ [스케줄러 활성화] 한국 NXT 시장(20:00 마감) 대응: 매주 평일 20:05 자동 수집 대기 중`);
 });
