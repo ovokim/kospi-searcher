@@ -48,61 +48,6 @@ function isPureStock(item) {
     return true;
 }
 
-// ⭐ [핵심 해결] EUC-KR 디코더 탑재로 한글 깨짐 0% 보장하는 전종목 세부업종 수집기
-let industryMapCache = null;
-let lastIndustryFetch = 0;
-
-async function getIndustryMap() {
-    if (industryMapCache && (Date.now() - lastIndustryFetch < 24 * 3600 * 1000) && industryMapCache.size > 100) {
-        return industryMapCache;
-    }
-    const codeToIndustry = new Map();
-    try {
-        console.log('[업종 분류] 네이버 79개 전업종 매핑 시작 (EUC-KR 디코딩 적용)...');
-        const res = await fetch('https://finance.naver.com/sise/sise_group.naver?type=upjong', { headers: FETCH_HEADERS });
-        const buffer = await res.arrayBuffer();
-        const decoder = new TextDecoder('euc-kr');
-        const html = decoder.decode(buffer);
-
-        const groupMatches = [...html.matchAll(/href="\/sise\/sise_group_detail\.(?:naver|nhn)\?type=upjong&no=(\d+)">([^<]+)<\/a>/gi)];
-
-        const chunkSize = 20;
-        for (let i = 0; i < groupMatches.length; i += chunkSize) {
-            const chunk = groupMatches.slice(i, i + chunkSize);
-            await Promise.all(chunk.map(async (m) => {
-                const no = m[1];
-                const industryName = m[2].trim();
-                try {
-                    const detailRes = await fetch(`https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no=${no}`, {
-                        headers: FETCH_HEADERS,
-                        signal: AbortSignal.timeout(6000)
-                    });
-                    const dBuffer = await detailRes.arrayBuffer();
-                    const detailHtml = decoder.decode(dBuffer);
-                    const stockMatches = [...detailHtml.matchAll(/code=([0-9]{6})/gi)];
-                    for (const sm of stockMatches) {
-                        const sc = sm[1];
-                        if (!codeToIndustry.has(sc)) {
-                            codeToIndustry.set(sc, industryName);
-                        }
-                    }
-                } catch (e) { }
-            }));
-        }
-
-        if (codeToIndustry.size > 0) {
-            console.log(`[업종 분류] ${codeToIndustry.size}개 종목 세부업종 매핑 성공! (예: 005930 삼성전자 -> ${codeToIndustry.get('005930') || '확인필요'}) ✅`);
-            industryMapCache = codeToIndustry;
-            lastIndustryFetch = Date.now();
-        } else {
-            console.warn('[업종 분류] 업종 매핑 결과가 0개입니다. 네트워크 상태를 확인하세요.');
-        }
-    } catch (e) {
-        console.error('[업종 분류 수집 실패]', e.message);
-    }
-    return codeToIndustry;
-}
-
 function parseWiseReportHtml(html) {
     const years = [];
     const theadMatch = /<thead[^>]*>([\s\S]*?)<\/thead>/i.exec(html);
@@ -139,15 +84,11 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// 1. 보통주 수집 및 세부업종 100% 매핑
+// 1. 보통주 수집
 app.get('/api/sync-krx', async (req, res) => {
     const targetMarket = (req.query.market || 'ALL').toUpperCase();
     try {
         console.log(`[시장 수집 시작] 대상: ${targetMarket}`);
-        
-        // 업종 맵 사전 준비
-        const industryMap = await getIndustryMap();
-
         const markets = targetMarket === 'ALL' ? ['KOSPI', 'KOSDAQ'] : [targetMarket];
         let allStocks = [];
 
@@ -166,7 +107,7 @@ app.get('/api/sync-krx', async (req, res) => {
                             code: s.itemCode,
                             name: s.stockName,
                             market: mkt,
-                            subSector: industryMap.get(s.itemCode) || '기타',
+                            subSector: null,
                             price: parseFinNumber(s.closePrice),
                             changeRate: parseFinNumber(s.fluctuationsRatio),
                             marketCap: parseFinNumber(s.marketValue),
@@ -203,7 +144,7 @@ app.get('/api/sync-krx', async (req, res) => {
             }
         }
 
-        // ⭐ 기존 캐시 병합 시, 유효한 업종명이 있으면 무조건 덮어써서 '기타' 탈출
+        // 기존 캐시 병합 보존
         if (fs.existsSync(CACHE_FILE)) {
             try {
                 const oldCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
@@ -211,10 +152,9 @@ app.get('/api/sync-krx', async (req, res) => {
                 allStocks = allStocks.map(ns => {
                     const os = oldMap.get(ns.code);
                     if (os) {
-                        const validSector = (ns.subSector && ns.subSector !== '기타') ? ns.subSector : (os.subSector && os.subSector !== '기타' ? os.subSector : (industryMap.get(ns.code) || '기타'));
                         return {
                             ...ns,
-                            subSector: validSector,
+                            subSector: os.subSector || null,
                             latestSales: os.latestSales,
                             latestNetIncome: os.latestNetIncome,
                             opm: os.opm,
@@ -255,7 +195,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 병렬 수집
+// ⭐ 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 + WICS 기업개요 직수집 (Render 해외 IP 100% 뚫림)
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -265,24 +205,44 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
     const results = await Promise.all(stocks.map(async (stk) => {
         try {
             const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
-            const wiseUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
+            const wiseFinUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
+            // ⭐ [핵심] Render 클라우드에서도 무조건 열리는 와이즈리포트 공식 기업개요 페이지
+            const wiseSummaryUrl = `https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${stk.code}`;
 
-            const needWiseReport = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
+            const needFin = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
+            // ⭐ 기존에 '기타'이거나 비어있으면 무조건 WICS 세부업종을 새로 긁어옴!
+            const needWics = !stk.subSector || stk.subSector === '기타' || stk.subSector === '확인필요';
 
             const fetchTasks = [
-                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) })
+                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
             ];
-            if (needWiseReport) {
-                fetchTasks.push(fetch(wiseUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) }));
+            if (needFin) {
+                fetchTasks.push(fetch(wiseFinUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
+            }
+            if (needWics) {
+                fetchTasks.push(fetch(wiseSummaryUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
             }
 
             const responses = await Promise.all(fetchTasks);
             const chartText = await responses[0].text();
-            const wiseText = needWiseReport && responses[1] ? await responses[1].text() : null;
+            
+            let idx = 1;
+            const wiseFinText = needFin && responses[idx] ? await responses[idx++].text() : null;
+            const summaryText = needWics && responses[idx] ? await responses[idx++].text() : null;
+
+            // ⭐ WICS 세부종류 파싱 (예: WICS : 반도체와반도체장비)
+            let subSector = (stk.subSector && stk.subSector !== '기타') ? stk.subSector : null;
+            if (summaryText) {
+                const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(summaryText);
+                if (wicsMatch && wicsMatch[1]) {
+                    subSector = wicsMatch[1].replace(/&nbsp;/g, '').trim();
+                }
+            }
+            if (!subSector) subSector = '기타';
 
             let finData = {};
-            if (wiseText) {
-                const { rowData } = parseWiseReportHtml(wiseText);
+            if (wiseFinText) {
+                const { rowData } = parseWiseReportHtml(wiseFinText);
                 const getAllValues = (candidateKeys) => {
                     for (const key of candidateKeys) {
                         const matchedRow = Object.keys(rowData).find(k => k.includes(key));
@@ -376,6 +336,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
             return {
                 code: stk.code,
+                subSector, // ⭐ 실제 WICS 세부업종 반영
                 ...finData,
                 high52,
                 low52,
@@ -490,18 +451,24 @@ app.get('/api/stock-report', async (req, res) => {
     if (!code) return res.status(400).send('종목코드가 필요합니다.');
 
     try {
-        const [naverResp, wiseResp, chartResp, industryMap] = await Promise.all([
+        const [naverResp, wiseResp, chartResp, summaryResp] = await Promise.all([
             fetch(`https://m.stock.naver.com/api/stock/${code}/basic`, { headers: FETCH_HEADERS }),
             fetch(`https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${code}&fin_typ=0&freq_typ=Y`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
             fetch(`https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=260&requestType=0`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
-            getIndustryMap()
+            fetch(`https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${code}`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
         ]);
 
         const basic = await naverResp.json();
         const wiseHtml = await wiseResp.text();
         const chartText = await chartResp.text();
+        const summaryText = await summaryResp.text();
         const { years, rowData } = parseWiseReportHtml(wiseHtml);
-        const subSector = industryMap.get(code) || '기타';
+
+        let subSector = '기타';
+        const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(summaryText);
+        if (wicsMatch && wicsMatch[1]) {
+            subSector = wicsMatch[1].replace(/&nbsp;/g, '').trim();
+        }
 
         const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
         let high52 = '-';
@@ -595,7 +562,7 @@ app.get('/api/stock-report', async (req, res) => {
             <div class="title">
                 <h1>
                     ${stockName} <span class="code-badge">${code}</span>
-                    <span class="sector-badge">업종: ${subSector}</span>
+                    <span class="sector-badge">WICS: ${subSector}</span>
                 </h1>
                 <p style="margin: 6px 0 0; color: #64748b; font-size: 12px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
             </div>
@@ -652,11 +619,10 @@ app.get('/api/cached-stocks', (req, res) => {
     res.json({ success: true, count: 0, data: [] });
 });
 
-// 6. 한국 NXT(대체거래소 20:00 마감) 대응: 평일 20:05 자동 수집 스케줄러
+// 6. 한국 NXT(대체거래소 20:00 마감) 대응 스케줄러
 async function runBackgroundAutoSync() {
     console.log('[자동스케줄러] 평일 20:05 NXT 장 마감 후 자동 전체 동기화 시작...');
     try {
-        const industryMap = await getIndustryMap();
         const markets = ['KOSPI', 'KOSDAQ'];
         let allStocks = [];
 
@@ -675,7 +641,6 @@ async function runBackgroundAutoSync() {
                             code: s.itemCode,
                             name: s.stockName,
                             market: mkt,
-                            subSector: industryMap.get(s.itemCode) || '기타',
                             price: parseFinNumber(s.closePrice),
                             changeRate: parseFinNumber(s.fluctuationsRatio),
                             marketCap: parseFinNumber(s.marketValue)
@@ -711,8 +676,8 @@ async function runBackgroundAutoSync() {
                         if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
                         if (closes.length >= 60) {
                             const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
-                            const b60 = closes[closes.length - 60];
-                            if (b60 > 0) return3M = parseFloat((((curPrice - b60) / base60) * 100).toFixed(2));
+                            const base60 = closes[closes.length - 60];
+                            if (base60 > 0) return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
                             isUptrend = curPrice >= c60;
                         }
                     }
