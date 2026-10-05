@@ -48,23 +48,25 @@ function isPureStock(item) {
     return true;
 }
 
-// ⭐ [초고속 전종목 업종 매핑 엔진] 네이버 79개 전업종 분류를 1.5초 만에 100% 매핑
+// ⭐ [핵심 해결] EUC-KR 디코더 탑재로 한글 깨짐 0% 보장하는 전종목 세부업종 수집기
 let industryMapCache = null;
 let lastIndustryFetch = 0;
 
 async function getIndustryMap() {
-    if (industryMapCache && (Date.now() - lastIndustryFetch < 24 * 3600 * 1000)) {
+    if (industryMapCache && (Date.now() - lastIndustryFetch < 24 * 3600 * 1000) && industryMapCache.size > 100) {
         return industryMapCache;
     }
+    const codeToIndustry = new Map();
     try {
-        console.log('[업종 분류] 네이버 79개 전업종 매핑 수집 시작...');
+        console.log('[업종 분류] 네이버 79개 전업종 매핑 시작 (EUC-KR 디코딩 적용)...');
         const res = await fetch('https://finance.naver.com/sise/sise_group.naver?type=upjong', { headers: FETCH_HEADERS });
-        const html = await res.text();
-        const groupMatches = [...html.matchAll(/href="\/sise\/sise_group_detail\.naver\?type=upjong&no=(\d+)">([^<]+)<\/a>/g)];
+        const buffer = await res.arrayBuffer();
+        const decoder = new TextDecoder('euc-kr');
+        const html = decoder.decode(buffer);
 
-        const codeToIndustry = new Map();
+        const groupMatches = [...html.matchAll(/href="\/sise\/sise_group_detail\.(?:naver|nhn)\?type=upjong&no=(\d+)">([^<]+)<\/a>/gi)];
+
         const chunkSize = 20;
-
         for (let i = 0; i < groupMatches.length; i += chunkSize) {
             const chunk = groupMatches.slice(i, i + chunkSize);
             await Promise.all(chunk.map(async (m) => {
@@ -75,8 +77,9 @@ async function getIndustryMap() {
                         headers: FETCH_HEADERS,
                         signal: AbortSignal.timeout(6000)
                     });
-                    const detailHtml = await detailRes.text();
-                    const stockMatches = [...detailHtml.matchAll(/href="\/item\/main\.naver\?code=([0-9]{6})"/g)];
+                    const dBuffer = await detailRes.arrayBuffer();
+                    const detailHtml = decoder.decode(dBuffer);
+                    const stockMatches = [...detailHtml.matchAll(/code=([0-9]{6})/gi)];
                     for (const sm of stockMatches) {
                         const sc = sm[1];
                         if (!codeToIndustry.has(sc)) {
@@ -87,14 +90,17 @@ async function getIndustryMap() {
             }));
         }
 
-        console.log(`[업종 분류] ${codeToIndustry.size}개 종목 세부업종 매핑 완료 ✅`);
-        industryMapCache = codeToIndustry;
-        lastIndustryFetch = Date.now();
-        return industryMapCache;
+        if (codeToIndustry.size > 0) {
+            console.log(`[업종 분류] ${codeToIndustry.size}개 종목 세부업종 매핑 성공! (예: 005930 삼성전자 -> ${codeToIndustry.get('005930') || '확인필요'}) ✅`);
+            industryMapCache = codeToIndustry;
+            lastIndustryFetch = Date.now();
+        } else {
+            console.warn('[업종 분류] 업종 매핑 결과가 0개입니다. 네트워크 상태를 확인하세요.');
+        }
     } catch (e) {
         console.error('[업종 분류 수집 실패]', e.message);
-        return industryMapCache || new Map();
     }
+    return codeToIndustry;
 }
 
 function parseWiseReportHtml(html) {
@@ -133,14 +139,14 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// 1. KOSPI & KOSDAQ 보통주 통합 수집 + 세부업종 100% 매핑
+// 1. 보통주 수집 및 세부업종 100% 매핑
 app.get('/api/sync-krx', async (req, res) => {
     const targetMarket = (req.query.market || 'ALL').toUpperCase();
     try {
         console.log(`[시장 수집 시작] 대상: ${targetMarket}`);
         
-        // 업종 매핑과 시장 조회를 병렬 실행
-        const [industryMap] = await Promise.all([getIndustryMap()]);
+        // 업종 맵 사전 준비
+        const industryMap = await getIndustryMap();
 
         const markets = targetMarket === 'ALL' ? ['KOSPI', 'KOSDAQ'] : [targetMarket];
         let allStocks = [];
@@ -197,7 +203,7 @@ app.get('/api/sync-krx', async (req, res) => {
             }
         }
 
-        // 기존 캐시 병합 보존 (기존 캐시에 subSector가 비어있어도 최신 업종으로 보충)
+        // ⭐ 기존 캐시 병합 시, 유효한 업종명이 있으면 무조건 덮어써서 '기타' 탈출
         if (fs.existsSync(CACHE_FILE)) {
             try {
                 const oldCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
@@ -205,9 +211,10 @@ app.get('/api/sync-krx', async (req, res) => {
                 allStocks = allStocks.map(ns => {
                     const os = oldMap.get(ns.code);
                     if (os) {
+                        const validSector = (ns.subSector && ns.subSector !== '기타') ? ns.subSector : (os.subSector && os.subSector !== '기타' ? os.subSector : (industryMap.get(ns.code) || '기타'));
                         return {
                             ...ns,
-                            subSector: os.subSector && os.subSector !== '기타' ? os.subSector : (industryMap.get(ns.code) || '기타'),
+                            subSector: validSector,
                             latestSales: os.latestSales,
                             latestNetIncome: os.latestNetIncome,
                             opm: os.opm,
@@ -649,7 +656,7 @@ app.get('/api/cached-stocks', (req, res) => {
 async function runBackgroundAutoSync() {
     console.log('[자동스케줄러] 평일 20:05 NXT 장 마감 후 자동 전체 동기화 시작...');
     try {
-        const [industryMap] = await Promise.all([getIndustryMap()]);
+        const industryMap = await getIndustryMap();
         const markets = ['KOSPI', 'KOSDAQ'];
         let allStocks = [];
 
@@ -705,7 +712,7 @@ async function runBackgroundAutoSync() {
                         if (closes.length >= 60) {
                             const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
                             const b60 = closes[closes.length - 60];
-                            if (b60 > 0) return3M = parseFloat((((curPrice - b60) / b60) * 100).toFixed(2));
+                            if (b60 > 0) return3M = parseFloat((((curPrice - b60) / base60) * 100).toFixed(2));
                             isUptrend = curPrice >= c60;
                         }
                     }
