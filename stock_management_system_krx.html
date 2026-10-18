@@ -14,7 +14,7 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 16px; }
-        .container { max-width: 1980px; margin: 0 auto; }
+        .container { max-width: 2050px; margin: 0 auto; }
         
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 22px; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
@@ -82,7 +82,7 @@
         .toggle-btn.active-fav { background: #fef9c3; color: #a16207; border-color: #fde047; }
         .toggle-btn input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
 
-        .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+        .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; }
         .filter-card { background: #f8fafc; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
         .filter-card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); }
         .range-inputs { display: flex; align-items: center; gap: 4px; }
@@ -120,7 +120,6 @@
         .badge-gold { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
         .badge-kospi { background: #e0f2fe; color: #0369a1; font-size: 9px; padding: 1px 4px; }
         .badge-kosdaq { background: #f3e8ff; color: #7e22ce; font-size: 9px; padding: 1px 4px; }
-        
         .badge-subsector { background: #f1f5f9; color: #334155; padding: 2px 7px; border-radius: 6px; font-weight: 600; font-size: 11px; border: 1px solid #cbd5e1; }
         
         .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
@@ -148,7 +147,7 @@
         <div class="control-panel">
             <div class="sync-box">
                 <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 210px;">
-                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/이평선/모멘텀/국민연금 비중을 25초 만에 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
+                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/이평선/모멘텀/수급을 25초 만에 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
                 <button class="btn btn-secondary" id="btnFullSync" onclick="startSync(false)" title="모든 종목의 재무제표까지 새로 긁어오는 전체 정밀 갱신">🚀 정밀 전체 동기화</button>
                 <button class="btn btn-danger" id="btnSyncAbort" onclick="abortSync()" style="display: none;">⛔ 중단</button>
                 <button class="btn btn-secondary" onclick="loadCachedData()">📁 캐시 불러오기</button>
@@ -174,7 +173,6 @@
                 <span id="progressPercent">0%</span>
             </div>
 
-            <!-- 실전 퀀트 프리셋 -->
             <div class="preset-box" style="margin-top: 14px;">
                 <span class="preset-title">🎯 실전 퀀트 프리셋:</span>
                 <button class="btn-preset" onclick="applyPreset('peterLynch')">🚀 피터린치형 (고성장 저평가 / PEG < 1.2)</button>
@@ -183,8 +181,7 @@
                 <button class="btn-preset gold" onclick="applyPreset('qualityGrowth')">👑 지속성장 대장주 (3년연속성장)</button>
                 <button class="btn-preset purple" onclick="applyPreset('turnaround')">📈 바닥 탈출 턴어라운드 (이평선돌파)</button>
                 <button class="btn-preset purple" onclick="applyPreset('breakout')">🔥 52주 신고가 돌파 (주도주)</button>
-                <!-- ⭐ 국민연금 집중 매수형 프리셋 추가 -->
-                <button class="btn-preset gold" onclick="applyPreset('npsBuy')">🏛️ 국민연금 집중매수 (지분 5%↑ & 순매수)</button>
+                <button class="btn-preset gold" onclick="applyPreset('npsBuy')">🏛️ 국민연금 집중매수 (지분 5%↑)</button>
                 <button class="btn-preset" onclick="applyPreset('reset')" style="margin-left: auto;">🔄 전체 초기화</button>
             </div>
 
@@ -258,6 +255,14 @@
                         <input type="number" id="f_min_quantScore" placeholder="최소" oninput="applyFilters()">
                         <span>~</span>
                         <input type="number" id="f_max_quantScore" placeholder="최대" oninput="applyFilters()">
+                    </div>
+                </div>
+                <div class="filter-card">
+                    <span class="filter-card-title">🌍 외인 지분율 (%)</span>
+                    <div class="range-inputs">
+                        <input type="number" step="1" id="f_min_foreignRatio" placeholder="최소" oninput="applyFilters()">
+                        <span>~</span>
+                        <input type="number" step="1" id="f_max_foreignRatio" placeholder="최대" oninput="applyFilters()">
                     </div>
                 </div>
                 <div class="filter-card">
@@ -367,9 +372,10 @@
                         <th onclick="sortTable('code')">코드</th>
                         <th onclick="sortTable('name')">종목명 (리포트)</th>
                         <th onclick="sortTable('subSector')">세부종류 (WICS)</th>
-                        <!-- ⭐ [요청 컬럼 1 & 2] 국민연금 지분율 및 3개월 변동 컬럼 -->
+                        <th onclick="sortTable('foreignRatio')" style="background: #eff6ff; color: #1e40af;">🌍외인지분</th>
+                        <th onclick="sortTable('foreignChange')" style="background: #eff6ff; color: #1e40af;">🌍외인당일증감</th>
                         <th onclick="sortTable('npsRatio')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금지분</th>
-                        <th onclick="sortTable('npsChange3M')" style="background: #ecfdf5; color: #065f46;">🏛️3M변동</th>
+                        <th onclick="sortTable('npsChange3M')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금3M</th>
                         <th onclick="sortTable('quantScore')">퀀트점수</th>
                         <th onclick="sortTable('high52Ratio')">52주고점대비</th>
                         <th onclick="sortTable('return3M')">3개월수익률</th>
@@ -410,9 +416,20 @@
         let favorites = new Set(JSON.parse(localStorage.getItem('favStocks') || '[]'));
         let stockNotes = JSON.parse(localStorage.getItem('stockNotes') || '{}');
 
+        // ⭐ [에러 방지 핵심] 100% Null-Safe 헬퍼 함수
+        const getElVal = (id) => {
+            const el = document.getElementById(id);
+            return el ? el.value.trim() : '';
+        };
+        const getElChecked = (id) => {
+            const el = document.getElementById(id);
+            return el ? el.checked : false;
+        };
+
         window.onload = () => {
             const savedKey = localStorage.getItem('dartApiKey');
-            if (savedKey) document.getElementById('dartApiKey').value = savedKey;
+            const dartEl = document.getElementById('dartApiKey');
+            if (savedKey && dartEl) dartEl.value = savedKey;
             loadCachedData();
         };
 
@@ -420,7 +437,8 @@
             selectedMarket = mkt;
             document.querySelectorAll('.market-tab').forEach(t => t.classList.remove('active'));
             event.target.classList.add('active');
-            document.getElementById('currentMarketTag').innerText = mkt === 'ALL' ? '전체 시장 (KOSPI & KOSDAQ)' : `${mkt} 전용`;
+            const tagEl = document.getElementById('currentMarketTag');
+            if (tagEl) tagEl.innerText = mkt === 'ALL' ? '전체 시장 (KOSPI & KOSDAQ)' : `${mkt} 전용`;
             applyFilters();
         }
 
@@ -440,7 +458,6 @@
             stocks.forEach(s => {
                 let score = 50;
 
-                // 퀄리티 점수
                 if (s.roe) {
                     if (s.roe >= 15) score += 10;
                     else if (s.roe >= 10) score += 6;
@@ -454,7 +471,6 @@
                 if (s.ocfQuality) score += 4;
                 if (s.debtRatio && s.debtRatio > 200) score -= 6;
 
-                // 밸류 점수
                 if (s.per && s.per > 0) {
                     if (s.per <= 8) score += 8;
                     else if (s.per <= 12) score += 5;
@@ -467,7 +483,6 @@
                 }
                 if (s.fcfYield && s.fcfYield >= 5) score += 5;
 
-                // 모멘텀 점수
                 if (s.isUptrend) score += 6;
                 if (s.high52Ratio) {
                     if (s.high52Ratio >= 85) score += 5;
@@ -478,9 +493,10 @@
                     else if (s.return3M < -15) score -= 4;
                 }
 
-                // ⭐ 국민연금 가산점 (지분 5% 이상 +3점 / 최근 3개월 순매수 시 +3점)
+                if (s.foreignRatio && s.foreignRatio >= 30) score += 4;
+                if (s.foreignChange && s.foreignChange > 0) score += 3;
                 if (s.npsRatio && s.npsRatio >= 5) score += 3;
-                if (s.npsChange3M && s.npsChange3M > 0) score += 3;
+                if (s.npsChange3M && s.npsChange3M > 0) score += 2;
 
                 s.quantScore = Math.max(0, Math.min(100, Math.round(score)));
             });
@@ -493,37 +509,43 @@
             const txt = document.getElementById('progressText');
             const pct = document.getElementById('progressPercent');
 
-            box.style.display = 'block';
-            info.style.display = 'flex';
-            bar.style.width = `${percent}%`;
-            pct.innerText = `${percent}%`;
-            txt.innerText = text;
+            if (box) box.style.display = 'block';
+            if (info) info.style.display = 'flex';
+            if (bar) bar.style.width = `${percent}%`;
+            if (pct) pct.innerText = `${percent}%`;
+            if (txt) txt.innerText = text;
         }
 
         function abortSync() {
             if (abortController) {
                 abortController.abort();
                 isSyncing = false;
-                document.getElementById('btnFastSync').style.display = 'inline-flex';
-                document.getElementById('btnFullSync').style.display = 'inline-flex';
-                document.getElementById('btnSyncAbort').style.display = 'none';
+                const bFast = document.getElementById('btnFastSync');
+                const bFull = document.getElementById('btnFullSync');
+                const bAbort = document.getElementById('btnSyncAbort');
+                if (bFast) bFast.style.display = 'inline-flex';
+                if (bFull) bFull.style.display = 'inline-flex';
+                if (bAbort) bAbort.style.display = 'none';
                 updateProgress(0, '사용자에 의해 동기화가 중단되었습니다.');
             }
         }
 
         async function startSync(isFastMode = true) {
-            const dartKey = document.getElementById('dartApiKey').value.trim();
+            const dartKey = getElVal('dartApiKey');
             if (dartKey) localStorage.setItem('dartApiKey', dartKey);
 
-            const skipPenny = document.getElementById('chkSkipPenny').checked;
+            const skipPenny = getElChecked('chkSkipPenny');
 
             isSyncing = true;
             abortController = new AbortController();
             const signal = abortController.signal;
 
-            document.getElementById('btnFastSync').style.display = 'none';
-            document.getElementById('btnFullSync').style.display = 'none';
-            document.getElementById('btnSyncAbort').style.display = 'inline-flex';
+            const bFast = document.getElementById('btnFastSync');
+            const bFull = document.getElementById('btnFullSync');
+            const bAbort = document.getElementById('btnSyncAbort');
+            if (bFast) bFast.style.display = 'none';
+            if (bFull) bFull.style.display = 'none';
+            if (bAbort) bAbort.style.display = 'inline-flex';
 
             try {
                 const modeTitle = isFastMode ? '⚡ 초고속 모드' : '🚀 정밀 전체 모드';
@@ -565,7 +587,7 @@
 
                     const completed = Math.min(i + chunkSize, total);
                     const percent = Math.round(10 + (completed / total) * 88);
-                    updateProgress(percent, `[2단계 ${modeTitle}] 재무 & 국민연금 비중 동기화 (${completed}/${total}개)...`);
+                    updateProgress(percent, `[2단계 ${modeTitle}] 재무 & 수급 동기화 (${completed}/${total}개)...`);
 
                     if (i % 150 === 0) {
                         calculateQuantScores(rawStocks);
@@ -580,32 +602,38 @@
                 if (e.name !== 'AbortError') updateProgress(0, '동기화 오류: ' + e.message);
             } finally {
                 isSyncing = false;
-                document.getElementById('btnFastSync').style.display = 'inline-flex';
-                document.getElementById('btnFullSync').style.display = 'inline-flex';
-                document.getElementById('btnSyncAbort').style.display = 'none';
+                if (bFast) bFast.style.display = 'inline-flex';
+                if (bFull) bFull.style.display = 'inline-flex';
+                if (bAbort) bAbort.style.display = 'none';
             }
         }
 
         function toggleMomentumStyle() {
             const chkUp = document.getElementById('m_chkUptrend');
             const lblUp = document.getElementById('lbl_uptrend');
-            lblUp.classList.toggle('active-green', chkUp.checked);
+            if (lblUp && chkUp) lblUp.classList.toggle('active-green', chkUp.checked);
 
             const chkHigh = document.getElementById('m_chkHigh52');
             const lblHigh = document.getElementById('lbl_high52');
-            lblHigh.classList.toggle('active-purple', chkHigh.checked);
+            if (lblHigh && chkHigh) lblHigh.classList.toggle('active-purple', chkHigh.checked);
         }
 
         function toggleFavOnly() {
             const chk = document.getElementById('chkFavOnly');
-            document.getElementById('lbl_favOnly').classList.toggle('active-fav', chk.checked);
+            const lbl = document.getElementById('lbl_favOnly');
+            if (lbl && chk) lbl.classList.toggle('active-fav', chk.checked);
         }
 
         function resetMomentumDefaults() {
-            document.getElementById('m_chkUptrend').checked = false;
-            document.getElementById('m_chkHigh52').checked = false;
-            document.getElementById('m_minHigh52Ratio').value = '80';
-            document.getElementById('m_minReturn3M').value = '0';
+            const chkUp = document.getElementById('m_chkUptrend');
+            const chkHigh = document.getElementById('m_chkHigh52');
+            const inRatio = document.getElementById('m_minHigh52Ratio');
+            const inReturn = document.getElementById('m_minReturn3M');
+
+            if (chkUp) chkUp.checked = false;
+            if (chkHigh) chkHigh.checked = false;
+            if (inRatio) inRatio.value = '80';
+            if (inReturn) inReturn.value = '0';
             toggleMomentumStyle();
             applyFilters();
         }
@@ -620,46 +648,48 @@
             document.querySelectorAll('.range-inputs input, .quality-section input[type="number"]').forEach(el => el.value = '');
             document.querySelectorAll('.quality-section input[type="checkbox"]').forEach(el => el.checked = false);
             
-            document.getElementById('m_chkUptrend').checked = false;
-            document.getElementById('m_chkHigh52').checked = false;
-            document.getElementById('m_minHigh52Ratio').value = '80';
-            document.getElementById('m_minReturn3M').value = '0';
+            const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+            const setChk = (id, chk) => { const el = document.getElementById(id); if (el) el.checked = chk; };
+
+            setChk('m_chkUptrend', false);
+            setChk('m_chkHigh52', false);
+            setVal('m_minHigh52Ratio', '80');
+            setVal('m_minReturn3M', '0');
 
             if (type === 'peterLynch') {
-                document.getElementById('f_max_marketCap').value = '10000';
-                document.getElementById('f_min_salesGrowth').value = '10';
-                document.getElementById('f_min_netIncomeGrowth').value = '15';
-                document.getElementById('f_max_peg').value = '1.2';
-                document.getElementById('f_max_debtRatio').value = '100';
+                setVal('f_max_marketCap', '10000');
+                setVal('f_min_salesGrowth', '10');
+                setVal('f_min_netIncomeGrowth', '15');
+                setVal('f_max_peg', '1.2');
+                setVal('f_max_debtRatio', '100');
             } else if (type === 'cashCow') {
-                document.getElementById('f_min_fcfYield').value = '4.0';
-                document.getElementById('f_max_debtRatio').value = '70';
-                document.getElementById('f_min_dividendYield').value = '2.5';
-                document.getElementById('q_chkCashQuality').checked = true;
+                setVal('f_min_fcfYield', '4.0');
+                setVal('f_max_debtRatio', '70');
+                setVal('f_min_dividendYield', '2.5');
+                setChk('q_chkCashQuality', true);
             } else if (type === 'undervalued') {
-                document.getElementById('f_max_per').value = '10';
-                document.getElementById('f_max_pbr').value = '1.0';
-                document.getElementById('f_min_roe').value = '10';
+                setVal('f_max_per', '10');
+                setVal('f_max_pbr', '1.0');
+                setVal('f_min_roe', '10');
             } else if (type === 'qualityGrowth') {
-                document.getElementById('q_minSales').value = '500';
-                document.getElementById('q_minNetIncome').value = '50';
-                document.getElementById('q_chkContinuous').checked = true;
-                document.getElementById('f_max_per').value = '15';
-                document.getElementById('f_min_fcfYield').value = '2.0';
+                setVal('q_minSales', '500');
+                setVal('q_minNetIncome', '50');
+                setChk('q_chkContinuous', true);
+                setVal('f_max_per', '15');
+                setVal('f_min_fcfYield', '2.0');
             } else if (type === 'turnaround') {
-                document.getElementById('q_minSales').value = '500';
-                document.getElementById('m_chkUptrend').checked = true;
-                document.getElementById('m_minReturn3M').value = '5';
+                setVal('q_minSales', '500');
+                setChk('m_chkUptrend', true);
+                setVal('m_minReturn3M', '5');
             } else if (type === 'breakout') {
-                document.getElementById('q_minSales').value = '500';
-                document.getElementById('m_chkHigh52').checked = true;
-                document.getElementById('m_minHigh52Ratio').value = '85';
-                document.getElementById('f_max_per').value = '18';
+                setVal('q_minSales', '500');
+                setChk('m_chkHigh52', true);
+                setVal('m_minHigh52Ratio', '85');
+                setVal('f_max_per', '18');
             } else if (type === 'npsBuy') {
-                // ⭐ 국민연금 집중매수 프리셋
-                document.getElementById('f_min_npsRatio').value = '5.0';
-                document.getElementById('f_max_per').value = '20';
-                document.getElementById('m_chkUptrend').checked = true;
+                setVal('f_min_npsRatio', '5.0');
+                setVal('f_max_per', '20');
+                setChk('m_chkUptrend', true);
             }
 
             toggleMomentumStyle();
@@ -687,30 +717,38 @@
         }
 
         function applyFilters() {
-            const kw = document.getElementById('searchKeyword').value.trim().toLowerCase();
-            const favOnly = document.getElementById('chkFavOnly').checked;
+            const kw = getElVal('searchKeyword').toLowerCase();
+            const favOnly = getElChecked('chkFavOnly');
 
-            const minSales = parseFloat(document.getElementById('q_minSales').value) || -Infinity;
-            const minNet = parseFloat(document.getElementById('q_minNetIncome').value) || -Infinity;
-            const minOpm = parseFloat(document.getElementById('q_minOpm').value) || -Infinity;
-            const chkContinuous = document.getElementById('q_chkContinuous').checked;
-            const chkCashQuality = document.getElementById('q_chkCashQuality').checked;
+            const minSales = parseFloat(getElVal('q_minSales')) || -Infinity;
+            const minNet = parseFloat(getElVal('q_minNetIncome')) || -Infinity;
+            const minOpm = parseFloat(getElVal('q_minOpm')) || -Infinity;
+            const chkContinuous = getElChecked('q_chkContinuous');
+            const chkCashQuality = getElChecked('q_chkCashQuality');
 
-            const chkUptrend = document.getElementById('m_chkUptrend').checked;
-            const chkHigh52 = document.getElementById('m_chkHigh52').checked;
+            const chkUptrend = getElChecked('m_chkUptrend');
+            const chkHigh52 = getElChecked('m_chkHigh52');
             
-            const rawHigh52Val = document.getElementById('m_minHigh52Ratio').value.trim();
+            const rawHigh52Val = getElVal('m_minHigh52Ratio');
             const minHigh52Ratio = rawHigh52Val !== '' ? parseFloat(rawHigh52Val) : 80;
 
-            const rawReturnVal = document.getElementById('m_minReturn3M').value.trim();
+            const rawReturnVal = getElVal('m_minReturn3M');
             const minReturn3M = rawReturnVal !== '' ? parseFloat(rawReturnVal) : 0;
 
-            const getRange = (id) => ({
-                min: parseFloat(document.getElementById(`f_min_${id}`).value) || -Infinity,
-                max: parseFloat(document.getElementById(`f_max_${id}`).value) || Infinity
-            });
+            // ⭐ [핵심 방어 코드] getRange가 null을 절대 반환하지 않음
+            const getRange = (id) => {
+                const elMin = document.getElementById(`f_min_${id}`);
+                const elMax = document.getElementById(`f_max_${id}`);
+                const minVal = (elMin && elMin.value.trim() !== '') ? parseFloat(elMin.value) : -Infinity;
+                const maxVal = (elMax && elMax.value.trim() !== '') ? parseFloat(elMax.value) : Infinity;
+                return {
+                    min: isNaN(minVal) ? -Infinity : minVal,
+                    max: isNaN(maxVal) ? Infinity : maxVal
+                };
+            };
 
             const rScore = getRange('quantScore');
+            const rFrgn = getRange('foreignRatio');
             const rNps = getRange('npsRatio');
             const rMc = getRange('marketCap');
             const rPer = getRange('per');
@@ -755,6 +793,7 @@
                 };
 
                 if (!inRange(s.quantScore, rScore)) return false;
+                if (!inRange(s.foreignRatio, rFrgn)) return false;
                 if (!inRange(s.npsRatio, rNps)) return false;
                 if (!inRange(s.marketCap, rMc)) return false;
                 if (!inRange(s.per, rPer)) return false;
@@ -770,8 +809,11 @@
                 return true;
             });
 
-            document.getElementById('totalCount').innerText = rawStocks.length;
-            document.getElementById('filteredCount').innerText = filteredStocks.length;
+            const totalEl = document.getElementById('totalCount');
+            const filtEl = document.getElementById('filteredCount');
+            if (totalEl) totalEl.innerText = rawStocks.length;
+            if (filtEl) filtEl.innerText = filteredStocks.length;
+
             currentPage = 1;
             renderTable();
         }
@@ -795,6 +837,7 @@
             });
 
             const tbody = document.getElementById('stockTableBody');
+            if (!tbody) return;
             tbody.innerHTML = '';
             const start = (currentPage - 1) * pageSize;
             const paged = filteredStocks.slice(start, start + pageSize);
@@ -807,7 +850,13 @@
                 if ((s.quantScore || 0) >= 70) scoreClass = 'score-high';
                 else if ((s.quantScore || 0) >= 55) scoreClass = 'score-mid';
 
-                // 국민연금 3M 변동 스타일
+                let frgnChangeHtml = '-';
+                if (s.foreignChange !== null && s.foreignChange !== undefined) {
+                    if (s.foreignChange > 0) frgnChangeHtml = `<strong class="pos">+${s.foreignChange}%p</strong>`;
+                    else if (s.foreignChange < 0) frgnChangeHtml = `<strong class="neg">${s.foreignChange}%p</strong>`;
+                    else frgnChangeHtml = `<span style="color:#94a3b8;">0.00%p</span>`;
+                }
+
                 let npsChangeHtml = '-';
                 if (s.npsChange3M !== null && s.npsChange3M !== undefined) {
                     if (s.npsChange3M > 0) npsChangeHtml = `<strong class="pos">+${s.npsChange3M}%p</strong>`;
@@ -824,12 +873,13 @@
                         <span class="badge ${s.market === 'KOSDAQ' ? 'badge-kosdaq' : 'badge-kospi'}">${s.market || 'KOSPI'}</span>
                         <a class="stock-link" onclick="openReport('${s.code}')" title="심층 HTML 리포트">${s.name} ↗</a>
                         ${s.isContinuousGrowth ? '<span class="badge badge-gold" title="3개년 연속 매출+순익 우상향">👑 3년연속</span>' : ''}
-                        ${s.ocfQuality ? '<span class="badge badge-green" title="영업현금흐름 > 순이익 (진짜 현금창출)">✅ 현금우수</span>' : ''}
+                        ${s.ocfQuality ? '<span class="badge badge-green" title="영업현금흐름 > 순이익">✅ 현금우수</span>' : ''}
                         ${s.isUptrend ? '<span class="badge badge-green" title="상승추세">📈 상승</span>' : ''}
                         ${(s.high52Ratio || 0) >= 80 ? '<span class="badge badge-purple" title="신고가 근접">🎯 신고가</span>' : ''}
                     </td>
                     <td><span class="badge-subsector">${s.subSector || '-'}</span></td>
-                    <!-- ⭐ [새 컬럼 1 & 2] 국민연금 지분율 & 3M 변동 -->
+                    <td style="background: #f8faff;"><strong>${s.foreignRatio !== null && s.foreignRatio !== undefined ? s.foreignRatio + '%' : '-'}</strong></td>
+                    <td style="background: #f8faff;">${frgnChangeHtml}</td>
                     <td style="background: #f0fdf4;"><strong>${s.npsRatio !== null && s.npsRatio !== undefined ? s.npsRatio + '%' : '-'}</strong></td>
                     <td style="background: #f0fdf4;">${npsChangeHtml}</td>
                     <td><span class="score-pill ${scoreClass}">${s.quantScore ?? '-'}점</span></td>
@@ -857,6 +907,7 @@
 
         function renderPagination() {
             const pag = document.getElementById('pagination');
+            if (!pag) return;
             pag.innerHTML = '';
             const totalPages = Math.ceil(filteredStocks.length / pageSize) || 1;
             if (totalPages <= 1) return;
@@ -875,13 +926,15 @@
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
-            const headers = ['시장', '종목코드', '종목명', '세부종류(WICS)', '국민연금지분율(%)', '국민연금3M변동(%p)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
+            const headers = ['시장', '종목코드', '종목명', '세부종류(WICS)', '외인지분율(%)', '외인당일증감(%p)', '국민연금지분율(%)', '국민연금3M변동(%p)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
             
             const rows = filteredStocks.map(s => [
                 s.market || 'KOSPI',
                 `\t${s.code}`,
                 `"${(s.name || '').replace(/"/g, '""')}"`,
                 `"${(s.subSector || '').replace(/"/g, '""')}"`,
+                s.foreignRatio ?? '',
+                s.foreignChange ?? '',
                 s.npsRatio ?? '',
                 s.npsChange3M ?? '',
                 s.quantScore ?? '',
@@ -908,7 +961,7 @@
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.setAttribute('download', `한국퀀트알짜주_국민연금수급_${new Date().toISOString().slice(0, 10)}.csv`);
+            link.setAttribute('download', `한국퀀트알짜주_수급종합_${new Date().toISOString().slice(0, 10)}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

@@ -84,13 +84,12 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// ⭐ [국민연금 지분율 및 최근 3개월 변동폭 정밀 파서]
+// 국민연금 파서
 function parseNpsShareholding(summaryHtml) {
     let npsRatio = null;
     let npsChange3M = null;
     if (!summaryHtml) return { npsRatio, npsChange3M };
 
-    // 1. 현재 국민연금 보유 지분율 파싱 (주요주주 목록)
     const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let trMatch;
     while ((trMatch = trRegex.exec(summaryHtml)) !== null) {
@@ -108,7 +107,6 @@ function parseNpsShareholding(summaryHtml) {
         }
     }
 
-    // 2. 최근 3개월 국민연금 비중 변동폭(%p) 합산 (주주변동내역 요약)
     const now = new Date();
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(now.getMonth() - 3);
@@ -150,7 +148,7 @@ function parseNpsShareholding(summaryHtml) {
     if (hasRecentChange) {
         npsChange3M = parseFloat(totalChange.toFixed(2));
     } else {
-        npsChange3M = 0; // 변동 없음
+        npsChange3M = 0;
     }
 
     return { npsRatio, npsChange3M };
@@ -182,6 +180,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             subSector: null,
                             npsRatio: null,
                             npsChange3M: null,
+                            foreignRatio: null,   // ⭐ 외국인 지분율 (%)
+                            foreignChange: null,  // ⭐ 외국인 당일 증감 (%p)
                             price: parseFinNumber(s.closePrice),
                             changeRate: parseFinNumber(s.fluctuationsRatio),
                             marketCap: parseFinNumber(s.marketValue),
@@ -218,7 +218,6 @@ app.get('/api/sync-krx', async (req, res) => {
             }
         }
 
-        // 기존 캐시 병합 보존
         if (fs.existsSync(CACHE_FILE)) {
             try {
                 const oldCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
@@ -231,6 +230,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             subSector: os.subSector || null,
                             npsRatio: os.npsRatio ?? null,
                             npsChange3M: os.npsChange3M ?? null,
+                            foreignRatio: os.foreignRatio ?? null,
+                            foreignChange: os.foreignChange ?? null,
                             latestSales: os.latestSales,
                             latestNetIncome: os.latestNetIncome,
                             opm: os.opm,
@@ -271,7 +272,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// ⭐ 2. WiseReport 퀀트 재무 + 차트 + WICS 세부종류 + 국민연금(NPS) 지분율 & 3M변동 동시 수집
+// ⭐ 2. 퀀트 재무 + 차트(외국인소진율/증감 시계열 내장) + WICS + 국민연금 동시 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -280,16 +281,16 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
     const results = await Promise.all(stocks.map(async (stk) => {
         try {
-            const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
+            // ⭐ [핵심] 네이버 siseJson은 일봉 시세뿐만 아니라 '외국인소진율'을 일자별로 기본 제공함!
+            const chartJsonUrl = `https://fchart.stock.naver.com/siseJson.naver?symbol=${stk.code}&requestType=0&count=130&timeframe=day`;
             const wiseFinUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
             const wiseSummaryUrl = `https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${stk.code}`;
 
             const needFin = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
-            // 업종 또는 국민연금 데이터가 없으면 기업개요 페이지 호출
             const needSummary = !stk.subSector || stk.subSector === '기타' || stk.npsRatio === undefined || !fastMode;
 
             const fetchTasks = [
-                fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
+                fetch(chartJsonUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
             ];
             if (needFin) {
                 fetchTasks.push(fetch(wiseFinUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
@@ -299,7 +300,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             }
 
             const responses = await Promise.all(fetchTasks);
-            const chartText = await responses[0].text();
+            const chartRawText = await responses[0].text();
             
             let idx = 1;
             const wiseFinText = needFin && responses[idx] ? await responses[idx++].text() : null;
@@ -315,13 +316,69 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             }
             if (!subSector) subSector = '기타';
 
-            // ⭐ 국민연금 지분율 및 3개월 변동폭 파싱
+            // 국민연금 지분율 및 3개월 변동 파싱
             let npsRatio = stk.npsRatio ?? null;
             let npsChange3M = stk.npsChange3M ?? null;
             if (summaryText) {
                 const npsData = parseNpsShareholding(summaryText);
                 npsRatio = npsData.npsRatio;
                 npsChange3M = npsData.npsChange3M;
+            }
+
+            // ⭐ 일봉 시세 & 외국인 지분율 및 당일 증감 파싱
+            // siseJson 형식: [["날짜", "시가", "고가", "저가", "종가", "거래량", "외국인소진율"], ...]
+            let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
+            let foreignRatio = stk.foreignRatio ?? null;
+            let foreignChange = stk.foreignChange ?? null;
+
+            try {
+                const cleanJsonStr = chartRawText.replace(/'/g, '"').trim();
+                const chartData = JSON.parse(cleanJsonStr);
+                // 첫 행 헤더 제외한 실제 데이터 행
+                const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && r[0] !== '날짜');
+
+                if (rows.length > 0) {
+                    const highs = rows.map(r => parseFloat(r[2])).filter(v => !isNaN(v));
+                    const lows = rows.map(r => parseFloat(r[3])).filter(v => !isNaN(v));
+                    const closes = rows.map(r => parseFloat(r[4])).filter(v => !isNaN(v));
+
+                    if (highs.length > 0) high52 = Math.max(...highs);
+                    if (lows.length > 0) low52 = Math.min(...lows);
+
+                    const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
+                    if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
+
+                    if (closes.length >= 60) {
+                        const last60 = closes.slice(-60);
+                        ma60 = Math.round(last60.reduce((a, b) => a + b, 0) / 60);
+                        const base60 = closes[closes.length - 60];
+                        if (base60 > 0) return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
+                    }
+                    if (closes.length >= 120) {
+                        const last120 = closes.slice(-120);
+                        ma120 = Math.round(last120.reduce((a, b) => a + b, 0) / 120);
+                    }
+                    if (curPrice > 0 && ma60) {
+                        isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
+                    }
+
+                    // ⭐ 외국인 지분율(%) 및 당일 증가/감소분(%p) 계산
+                    const latestRow = rows[rows.length - 1];
+                    const prevRow = rows.length > 1 ? rows[rows.length - 2] : null;
+
+                    const curFrgn = parseFloat(latestRow[6]);
+                    if (!isNaN(curFrgn)) {
+                        foreignRatio = parseFloat(curFrgn.toFixed(2));
+                        if (prevRow) {
+                            const prevFrgn = parseFloat(prevRow[6]);
+                            if (!isNaN(prevFrgn)) {
+                                foreignChange = parseFloat((curFrgn - prevFrgn).toFixed(2));
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                // JSON 파싱 실패 시 fallback
             }
 
             let finData = {};
@@ -389,40 +446,13 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 };
             }
 
-            const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
-            let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
-
-            if (candleMatches.length > 0) {
-                const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
-                const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
-                const closes = candleMatches.map(c => parseFloat(c[4])).filter(v => !isNaN(v));
-
-                if (highs.length > 0) high52 = Math.max(...highs);
-                if (lows.length > 0) low52 = Math.min(...lows);
-
-                const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
-                if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
-
-                if (closes.length >= 60) {
-                    const last60 = closes.slice(-60);
-                    ma60 = Math.round(last60.reduce((a, b) => a + b, 0) / 60);
-                    const base60 = closes[closes.length - 60];
-                    if (base60 > 0) return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
-                }
-                if (closes.length >= 120) {
-                    const last120 = closes.slice(-120);
-                    ma120 = Math.round(last120.reduce((a, b) => a + b, 0) / 120);
-                }
-                if (curPrice > 0 && ma60) {
-                    isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
-                }
-            }
-
             return {
                 code: stk.code,
                 subSector,
-                npsRatio,      // ⭐ 국민연금 보유 지분율 (%)
-                npsChange3M,   // ⭐ 최근 3개월 국민연금 비중 변동 (%p)
+                npsRatio,
+                npsChange3M,
+                foreignRatio,  // ⭐ 외인 지분율
+                foreignChange, // ⭐ 외인 당일 증감
                 ...finData,
                 high52,
                 low52,
@@ -540,13 +570,13 @@ app.get('/api/stock-report', async (req, res) => {
         const [naverResp, wiseResp, chartResp, summaryResp] = await Promise.all([
             fetch(`https://m.stock.naver.com/api/stock/${code}/basic`, { headers: FETCH_HEADERS }),
             fetch(`https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${code}&fin_typ=0&freq_typ=Y`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
-            fetch(`https://fchart.stock.naver.com/sise.nhn?symbol=${code}&timeframe=day&count=260&requestType=0`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
+            fetch(`https://fchart.stock.naver.com/siseJson.naver?symbol=${code}&requestType=0&count=130&timeframe=day`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
             fetch(`https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${code}`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
         ]);
 
         const basic = await naverResp.json();
         const wiseHtml = await wiseResp.text();
-        const chartText = await chartResp.text();
+        const chartRawText = await chartResp.text();
         const summaryText = await summaryResp.text();
         const { years, rowData } = parseWiseReportHtml(wiseHtml);
 
@@ -558,37 +588,58 @@ app.get('/api/stock-report', async (req, res) => {
 
         const { npsRatio, npsChange3M } = parseNpsShareholding(summaryText);
 
-        const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
         let high52 = '-';
         let low52 = '-';
         let high52Ratio = '-';
         let return3M = '-';
         let trendStatus = '판별 불가';
+        let foreignRatio = '-';
+        let foreignChange = '-';
 
-        if (candleMatches.length > 0) {
-            const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
-            const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
-            const closes = candleMatches.map(c => parseFloat(c[4])).filter(v => !isNaN(v));
+        try {
+            const cleanJsonStr = chartRawText.replace(/'/g, '"').trim();
+            const chartData = JSON.parse(cleanJsonStr);
+            const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && r[0] !== '날짜');
 
-            if (highs.length > 0) high52 = Math.max(...highs).toLocaleString() + ' 원';
-            if (lows.length > 0) low52 = Math.min(...lows).toLocaleString() + ' 원';
+            if (rows.length > 0) {
+                const highs = rows.map(r => parseFloat(r[2])).filter(v => !isNaN(v));
+                const lows = rows.map(r => parseFloat(r[3])).filter(v => !isNaN(v));
+                const closes = rows.map(r => parseFloat(r[4])).filter(v => !isNaN(v));
 
-            const cur = parseFinNumber(basic.closePrice) || (closes.length > 0 ? closes[closes.length - 1] : 0);
-            const numHigh = Math.max(...highs);
-            if (numHigh > 0 && cur > 0) {
-                high52Ratio = ((cur / numHigh) * 100).toFixed(1) + '%';
-            }
+                if (highs.length > 0) high52 = Math.max(...highs).toLocaleString() + ' 원';
+                if (lows.length > 0) low52 = Math.min(...lows).toLocaleString() + ' 원';
 
-            if (closes.length >= 60) {
-                const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
-                const base60 = closes[closes.length - 60];
-                if (base60 > 0) {
-                    const r = (((cur - base60) / base60) * 100).toFixed(2);
-                    return3M = (r > 0 ? '+' : '') + r + '%';
+                const cur = parseFinNumber(basic.closePrice) || (closes.length > 0 ? closes[closes.length - 1] : 0);
+                const numHigh = Math.max(...highs);
+                if (numHigh > 0 && cur > 0) {
+                    high52Ratio = ((cur / numHigh) * 100).toFixed(1) + '%';
                 }
-                trendStatus = cur >= c60 ? '📈 상승추세 (60일선 위)' : '📉 하락추세 (60일선 아래)';
+
+                if (closes.length >= 60) {
+                    const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
+                    const base60 = closes[closes.length - 60];
+                    if (base60 > 0) {
+                        const r = (((cur - base60) / base60) * 100).toFixed(2);
+                        return3M = (r > 0 ? '+' : '') + r + '%';
+                    }
+                    trendStatus = cur >= c60 ? '📈 상승추세 (60일선 위)' : '📉 하락추세 (60일선 아래)';
+                }
+
+                const latestRow = rows[rows.length - 1];
+                const prevRow = rows.length > 1 ? rows[rows.length - 2] : null;
+                const curFrgn = parseFloat(latestRow[6]);
+                if (!isNaN(curFrgn)) {
+                    foreignRatio = curFrgn.toFixed(2) + '%';
+                    if (prevRow) {
+                        const prevFrgn = parseFloat(prevRow[6]);
+                        if (!isNaN(prevFrgn)) {
+                            const diff = (curFrgn - prevFrgn).toFixed(2);
+                            foreignChange = (diff > 0 ? '+' : '') + diff + '%p';
+                        }
+                    }
+                }
             }
-        }
+        } catch (e) { }
 
         const financialRows = [
             '매출액', '영업이익', '당기순이익', '영업활동으로인한현금흐름', '부채비율',
@@ -627,6 +678,7 @@ app.get('/api/stock-report', async (req, res) => {
         .code-badge { font-size: 13px; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; }
         .sector-badge { font-size: 13px; background: #fef3c7; color: #92400e; border: 1px solid #fde68a; padding: 4px 10px; border-radius: 6px; }
         .nps-badge { font-size: 13px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 6px; }
+        .frgn-badge { font-size: 13px; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 6px; }
         .btn-group { display: flex; gap: 8px; }
         .btn { padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); text-decoration: none; font-size: 12px; }
         .btn-primary { background: var(--primary); color: white; border: none; }
@@ -634,6 +686,7 @@ app.get('/api/stock-report', async (req, res) => {
         .card { background: #f8fafc; padding: 14px; border-radius: 10px; border-left: 4px solid var(--primary); }
         .card.purple { border-left-color: #7c3aed; background: #faf5ff; }
         .card.green { border-left-color: #059669; background: #ecfdf5; }
+        .card.blue { border-left-color: #2563eb; background: #eff6ff; }
         .label { font-size: 11px; color: #64748b; margin-bottom: 4px; font-weight: 600; }
         .val { font-size: 18px; font-weight: 800; color: #0f172a; }
         .section-title { font-size: 16px; font-weight: 800; margin: 24px 0 10px; color: #334155; }
@@ -653,6 +706,7 @@ app.get('/api/stock-report', async (req, res) => {
                 <h1>
                     ${stockName} <span class="code-badge">${code}</span>
                     <span class="sector-badge">WICS: ${subSector}</span>
+                    <span class="frgn-badge">🌍 외인: ${foreignRatio} (${foreignChange})</span>
                     <span class="nps-badge">🏛️ 국민연금: ${npsRatio !== null ? npsRatio + '%' : '미보유'} (${npsChange3M > 0 ? '+' : ''}${npsChange3M ?? 0}%p)</span>
                 </h1>
                 <p style="margin: 6px 0 0; color: #64748b; font-size: 12px; width: 100%;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
@@ -671,10 +725,10 @@ app.get('/api/stock-report', async (req, res) => {
         </div>
 
         <div class="grid-4">
+            <div class="card blue"><div class="label">🌍 외국인 지분율</div><div class="val">${foreignRatio}</div></div>
+            <div class="card blue"><div class="label">🌍 외국인 당일 증감</div><div class="val">${foreignChange}</div></div>
             <div class="card green"><div class="label">🏛️ 국민연금 보유지분율</div><div class="val">${npsRatio !== null ? npsRatio + '%' : '-'}</div></div>
-            <div class="card green"><div class="label">🏛️ 국민연금 3M 변동</div><div class="val" style="color: ${npsChange3M > 0 ? '#dc2626' : (npsChange3M < 0 ? '#2563eb' : '#0f172a')}">${npsChange3M !== null ? (npsChange3M > 0 ? '+' : '') + npsChange3M + '%p' : '-'}</div></div>
             <div class="card purple"><div class="label">52주 최고가 (근접도)</div><div class="val">${high52} <span style="font-size: 13px; color: #7c3aed;">(${high52Ratio})</span></div></div>
-            <div class="card purple"><div class="label">중기 추세 진단</div><div class="val" style="font-size: 14px;">${trendStatus}</div></div>
         </div>
 
         <div class="section-title">📊 최근 4개년 연간 재무 요약 (손익/재무/현금흐름)</div>
@@ -751,30 +805,48 @@ async function runBackgroundAutoSync() {
             const chunk = allStocks.slice(i, i + chunkSize);
             const chunkResults = await Promise.all(chunk.map(async (stk) => {
                 try {
-                    const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
-                    const chartResp = await fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) });
-                    const chartText = await chartResp.text();
+                    const chartJsonUrl = `https://fchart.stock.naver.com/siseJson.naver?symbol=${stk.code}&requestType=0&count=130&timeframe=day`;
+                    const chartResp = await fetch(chartJsonUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(6000) });
+                    const chartRawText = await chartResp.text();
 
-                    const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
                     let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
-                    if (candleMatches.length > 0) {
-                        const highs = candleMatches.map(c => parseFloat(c[2])).filter(v => !isNaN(v));
-                        const lows = candleMatches.map(c => parseFloat(c[3])).filter(v => !isNaN(v));
-                        const closes = candleMatches.map(c => parseFloat(c[4])).filter(v => !isNaN(v));
-                        if (highs.length > 0) high52 = Math.max(...highs);
-                        if (lows.length > 0) low52 = Math.min(...lows);
-                        const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
-                        if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
-                        if (closes.length >= 60) {
-                            const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
-                            const base60 = closes[closes.length - 60];
-                            if (base60 > 0) return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
-                            isUptrend = curPrice >= c60;
+                    let foreignRatio = null, foreignChange = null;
+
+                    try {
+                        const cleanJsonStr = chartRawText.replace(/'/g, '"').trim();
+                        const chartData = JSON.parse(cleanJsonStr);
+                        const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && r[0] !== '날짜');
+                        if (rows.length > 0) {
+                            const highs = rows.map(r => parseFloat(r[2])).filter(v => !isNaN(v));
+                            const lows = rows.map(r => parseFloat(r[3])).filter(v => !isNaN(v));
+                            const closes = rows.map(r => parseFloat(r[4])).filter(v => !isNaN(v));
+                            if (highs.length > 0) high52 = Math.max(...highs);
+                            if (lows.length > 0) low52 = Math.min(...lows);
+                            const curPrice = stk.price || (closes.length > 0 ? closes[closes.length - 1] : 0);
+                            if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
+                            if (closes.length >= 60) {
+                                const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
+                                const b60 = closes[closes.length - 60];
+                                if (b60 > 0) return3M = parseFloat((((curPrice - b60) / b60) * 100).toFixed(2));
+                                isUptrend = curPrice >= c60;
+                            }
+                            const latestRow = rows[rows.length - 1];
+                            const prevRow = rows.length > 1 ? rows[rows.length - 2] : null;
+                            const curFrgn = parseFloat(latestRow[6]);
+                            if (!isNaN(curFrgn)) {
+                                foreignRatio = parseFloat(curFrgn.toFixed(2));
+                                if (prevRow) {
+                                    const prevFrgn = parseFloat(prevRow[6]);
+                                    if (!isNaN(prevFrgn)) foreignChange = parseFloat((curFrgn - prevFrgn).toFixed(2));
+                                }
+                            }
                         }
-                    }
+                    } catch (e) { }
 
                     return {
                         ...stk,
+                        foreignRatio,
+                        foreignChange,
                         high52,
                         low52,
                         high52Ratio,
