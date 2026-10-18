@@ -14,7 +14,7 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 16px; }
-        .container { max-width: 1920px; margin: 0 auto; }
+        .container { max-width: 1980px; margin: 0 auto; }
         
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 22px; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
@@ -32,7 +32,6 @@
         .btn-success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
         .btn-success:hover { background: #bbf7d0; }
 
-        /* 실시간 프로그레스 바 */
         .progress-container { width: 100%; background: #e2e8f0; border-radius: 8px; height: 12px; overflow: hidden; margin-top: 8px; display: none; }
         .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.2s ease; }
         .progress-info { font-size: 12px; font-weight: 700; color: var(--primary); margin-top: 4px; display: flex; justify-content: space-between; }
@@ -83,7 +82,7 @@
         .toggle-btn.active-fav { background: #fef9c3; color: #a16207; border-color: #fde047; }
         .toggle-btn input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
 
-        .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 8px; }
+        .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
         .filter-card { background: #f8fafc; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
         .filter-card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); }
         .range-inputs { display: flex; align-items: center; gap: 4px; }
@@ -122,7 +121,6 @@
         .badge-kospi { background: #e0f2fe; color: #0369a1; font-size: 9px; padding: 1px 4px; }
         .badge-kosdaq { background: #f3e8ff; color: #7e22ce; font-size: 9px; padding: 1px 4px; }
         
-        /* 세부종류 배지 스타일 */
         .badge-subsector { background: #f1f5f9; color: #334155; padding: 2px 7px; border-radius: 6px; font-weight: 600; font-size: 11px; border: 1px solid #cbd5e1; }
         
         .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
@@ -149,10 +147,8 @@
 
         <div class="control-panel">
             <div class="sync-box">
-                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 220px;">
-                <!-- ⚡ 초고속 모드: 25초 컷 (기존 재무 캐시 유지 + 일봉/주가/이평선/모멘텀 초고속 갱신) -->
-                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/이평선/모멘텀만 25초 만에 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
-                <!-- 🚀 정밀 전체 모드: 약 1분 (3,000개 전종목 재무까지 전수 수집) -->
+                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 210px;">
+                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/이평선/모멘텀/국민연금 비중을 25초 만에 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
                 <button class="btn btn-secondary" id="btnFullSync" onclick="startSync(false)" title="모든 종목의 재무제표까지 새로 긁어오는 전체 정밀 갱신">🚀 정밀 전체 동기화</button>
                 <button class="btn btn-danger" id="btnSyncAbort" onclick="abortSync()" style="display: none;">⛔ 중단</button>
                 <button class="btn btn-secondary" onclick="loadCachedData()">📁 캐시 불러오기</button>
@@ -170,7 +166,6 @@
                 <input type="text" id="searchKeyword" placeholder="종목명/코드/세부업종 검색..." style="width: 170px; margin-left: auto;" oninput="applyFilters()">
             </div>
 
-            <!-- 시각적 프로그레스 바 -->
             <div class="progress-container" id="progressContainer">
                 <div class="progress-bar" id="progressBar"></div>
             </div>
@@ -179,7 +174,7 @@
                 <span id="progressPercent">0%</span>
             </div>
 
-            <!-- 6대 실전 프리셋 완비 -->
+            <!-- 실전 퀀트 프리셋 -->
             <div class="preset-box" style="margin-top: 14px;">
                 <span class="preset-title">🎯 실전 퀀트 프리셋:</span>
                 <button class="btn-preset" onclick="applyPreset('peterLynch')">🚀 피터린치형 (고성장 저평가 / PEG < 1.2)</button>
@@ -188,6 +183,8 @@
                 <button class="btn-preset gold" onclick="applyPreset('qualityGrowth')">👑 지속성장 대장주 (3년연속성장)</button>
                 <button class="btn-preset purple" onclick="applyPreset('turnaround')">📈 바닥 탈출 턴어라운드 (이평선돌파)</button>
                 <button class="btn-preset purple" onclick="applyPreset('breakout')">🔥 52주 신고가 돌파 (주도주)</button>
+                <!-- ⭐ 국민연금 집중 매수형 프리셋 추가 -->
+                <button class="btn-preset gold" onclick="applyPreset('npsBuy')">🏛️ 국민연금 집중매수 (지분 5%↑ & 순매수)</button>
                 <button class="btn-preset" onclick="applyPreset('reset')" style="margin-left: auto;">🔄 전체 초기화</button>
             </div>
 
@@ -243,7 +240,6 @@
 
                     <div class="input-group">
                         <label style="color: #4c1d95;">신고가 근접도 기준 (% 이상)</label>
-                        <!-- ⭐ [버그 방어] 기본값 80 보장 -->
                         <input type="number" step="1" id="m_minHigh52Ratio" value="80" placeholder="기본: 80" oninput="applyFilters()">
                     </div>
 
@@ -262,6 +258,14 @@
                         <input type="number" id="f_min_quantScore" placeholder="최소" oninput="applyFilters()">
                         <span>~</span>
                         <input type="number" id="f_max_quantScore" placeholder="최대" oninput="applyFilters()">
+                    </div>
+                </div>
+                <div class="filter-card">
+                    <span class="filter-card-title">🏛️ 국민연금 지분율 (%)</span>
+                    <div class="range-inputs">
+                        <input type="number" step="0.5" id="f_min_npsRatio" placeholder="최소" oninput="applyFilters()">
+                        <span>~</span>
+                        <input type="number" step="0.5" id="f_max_npsRatio" placeholder="최대" oninput="applyFilters()">
                     </div>
                 </div>
                 <div class="filter-card">
@@ -294,14 +298,6 @@
                         <input type="number" step="0.1" id="f_min_roe" placeholder="최소" oninput="applyFilters()">
                         <span>~</span>
                         <input type="number" step="0.1" id="f_max_roe" placeholder="최대" oninput="applyFilters()">
-                    </div>
-                </div>
-                <div class="filter-card">
-                    <span class="filter-card-title">PEG</span>
-                    <div class="range-inputs">
-                        <input type="number" step="0.1" id="f_min_peg" placeholder="최소" oninput="applyFilters()">
-                        <span>~</span>
-                        <input type="number" step="0.1" id="f_max_peg" placeholder="최대" oninput="applyFilters()">
                     </div>
                 </div>
                 <div class="filter-card">
@@ -350,7 +346,7 @@
         <div class="status-bar">
             <div>
                 총 <strong id="totalCount">0</strong>개 중 <strong id="filteredCount">0</strong>개 발굴
-                <span style="margin-left: 10px; font-size: 11px;">(⭐ 별표: 관심종목 저장 | 📝 메모 클릭: 매매노트 | 종목명 클릭: 심층 HTML 리포트)</span>
+                <span style="margin-left: 10px; font-size: 11px;">(⭐ 별표: 관심저장 | 📝 메모 | 종목명 클릭: 심층리포트 | 🏛️ 국민연금 지분/변동 클릭 시 정렬)</span>
             </div>
             <div>
                 <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize(this.value)">
@@ -370,8 +366,10 @@
                         <th style="width: 32px;">메모</th>
                         <th onclick="sortTable('code')">코드</th>
                         <th onclick="sortTable('name')">종목명 (리포트)</th>
-                        <!-- ⭐ 세부종류(WICS) 컬럼 추가 및 정렬 지원 -->
                         <th onclick="sortTable('subSector')">세부종류 (WICS)</th>
+                        <!-- ⭐ [요청 컬럼 1 & 2] 국민연금 지분율 및 3개월 변동 컬럼 -->
+                        <th onclick="sortTable('npsRatio')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금지분</th>
+                        <th onclick="sortTable('npsChange3M')" style="background: #ecfdf5; color: #065f46;">🏛️3M변동</th>
                         <th onclick="sortTable('quantScore')">퀀트점수</th>
                         <th onclick="sortTable('high52Ratio')">52주고점대비</th>
                         <th onclick="sortTable('return3M')">3개월수익률</th>
@@ -480,6 +478,10 @@
                     else if (s.return3M < -15) score -= 4;
                 }
 
+                // ⭐ 국민연금 가산점 (지분 5% 이상 +3점 / 최근 3개월 순매수 시 +3점)
+                if (s.npsRatio && s.npsRatio >= 5) score += 3;
+                if (s.npsChange3M && s.npsChange3M > 0) score += 3;
+
                 s.quantScore = Math.max(0, Math.min(100, Math.round(score)));
             });
         }
@@ -525,7 +527,7 @@
 
             try {
                 const modeTitle = isFastMode ? '⚡ 초고속 모드' : '🚀 정밀 전체 모드';
-                updateProgress(5, `[1단계] ${selectedMarket} 시장 보통주 전수 수집 중...`);
+                updateProgress(5, `[1단계] ${selectedMarket} 보통주 수집 중...`);
                 
                 const krxRes = await fetch(`/api/sync-krx?market=${selectedMarket}`, { signal });
                 const krxJson = await krxRes.json();
@@ -563,7 +565,7 @@
 
                     const completed = Math.min(i + chunkSize, total);
                     const percent = Math.round(10 + (completed / total) * 88);
-                    updateProgress(percent, `[2단계 ${modeTitle}] 동기화 진행 중 (${completed}/${total}개)...`);
+                    updateProgress(percent, `[2단계 ${modeTitle}] 재무 & 국민연금 비중 동기화 (${completed}/${total}개)...`);
 
                     if (i % 150 === 0) {
                         calculateQuantScores(rawStocks);
@@ -653,6 +655,11 @@
                 document.getElementById('m_chkHigh52').checked = true;
                 document.getElementById('m_minHigh52Ratio').value = '85';
                 document.getElementById('f_max_per').value = '18';
+            } else if (type === 'npsBuy') {
+                // ⭐ 국민연금 집중매수 프리셋
+                document.getElementById('f_min_npsRatio').value = '5.0';
+                document.getElementById('f_max_per').value = '20';
+                document.getElementById('m_chkUptrend').checked = true;
             }
 
             toggleMomentumStyle();
@@ -704,6 +711,7 @@
             });
 
             const rScore = getRange('quantScore');
+            const rNps = getRange('npsRatio');
             const rMc = getRange('marketCap');
             const rPer = getRange('per');
             const rPbr = getRange('pbr');
@@ -719,13 +727,11 @@
                 if (selectedMarket !== 'ALL' && s.market && s.market !== selectedMarket) return false;
                 if (favOnly && !favorites.has(s.code)) return false;
 
-                // ⭐ [업그레이드] 검색창에 종목명, 코드뿐만 아니라 업종/세부종류까지 동시 검색
                 if (kw) {
                     const matchName = s.name && s.name.toLowerCase().includes(kw);
                     const matchCode = s.code && s.code.includes(kw);
-                    const matchSector = s.sector && s.sector.toLowerCase().includes(kw);
                     const matchSub = s.subSector && s.subSector.toLowerCase().includes(kw);
-                    if (!matchName && !matchCode && !matchSector && !matchSub) return false;
+                    if (!matchName && !matchCode && !matchSub) return false;
                 }
 
                 if (minSales !== -Infinity && (s.latestSales === null || s.latestSales < minSales)) return false;
@@ -749,6 +755,7 @@
                 };
 
                 if (!inRange(s.quantScore, rScore)) return false;
+                if (!inRange(s.npsRatio, rNps)) return false;
                 if (!inRange(s.marketCap, rMc)) return false;
                 if (!inRange(s.per, rPer)) return false;
                 if (!inRange(s.pbr, rPbr)) return false;
@@ -800,6 +807,14 @@
                 if ((s.quantScore || 0) >= 70) scoreClass = 'score-high';
                 else if ((s.quantScore || 0) >= 55) scoreClass = 'score-mid';
 
+                // 국민연금 3M 변동 스타일
+                let npsChangeHtml = '-';
+                if (s.npsChange3M !== null && s.npsChange3M !== undefined) {
+                    if (s.npsChange3M > 0) npsChangeHtml = `<strong class="pos">+${s.npsChange3M}%p</strong>`;
+                    else if (s.npsChange3M < 0) npsChangeHtml = `<strong class="neg">${s.npsChange3M}%p</strong>`;
+                    else npsChangeHtml = `<span style="color:#94a3b8;">0.00%p</span>`;
+                }
+
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><span class="star-fav ${isFav ? 'active' : ''}" onclick="toggleFavorite('${s.code}', event)" title="관심종목 토글">★</span></td>
@@ -813,8 +828,10 @@
                         ${s.isUptrend ? '<span class="badge badge-green" title="상승추세">📈 상승</span>' : ''}
                         ${(s.high52Ratio || 0) >= 80 ? '<span class="badge badge-purple" title="신고가 근접">🎯 신고가</span>' : ''}
                     </td>
-                    <!-- ⭐ 세부종류(WICS) 배지 출력 -->
-                    <td><span class="badge-subsector">${s.subSector || s.sector || '-'}</span></td>
+                    <td><span class="badge-subsector">${s.subSector || '-'}</span></td>
+                    <!-- ⭐ [새 컬럼 1 & 2] 국민연금 지분율 & 3M 변동 -->
+                    <td style="background: #f0fdf4;"><strong>${s.npsRatio !== null && s.npsRatio !== undefined ? s.npsRatio + '%' : '-'}</strong></td>
+                    <td style="background: #f0fdf4;">${npsChangeHtml}</td>
                     <td><span class="score-pill ${scoreClass}">${s.quantScore ?? '-'}점</span></td>
                     <td><strong>${s.high52Ratio !== null ? s.high52Ratio + '%' : '-'}</strong></td>
                     <td class="${(s.return3M || 0) > 0 ? 'pos' : 'neg'}"><strong>${s.return3M !== null ? (s.return3M > 0 ? '+' : '') + s.return3M + '%' : '-'}</strong></td>
@@ -858,14 +875,15 @@
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
-            const headers = ['시장', '종목코드', '종목명', '업종', '세부종류(WICS)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
+            const headers = ['시장', '종목코드', '종목명', '세부종류(WICS)', '국민연금지분율(%)', '국민연금3M변동(%p)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
             
             const rows = filteredStocks.map(s => [
                 s.market || 'KOSPI',
                 `\t${s.code}`,
                 `"${(s.name || '').replace(/"/g, '""')}"`,
-                `"${(s.sector || '').replace(/"/g, '""')}"`,
                 `"${(s.subSector || '').replace(/"/g, '""')}"`,
+                s.npsRatio ?? '',
+                s.npsChange3M ?? '',
                 s.quantScore ?? '',
                 s.high52Ratio ?? '',
                 s.return3M ?? '',
@@ -890,7 +908,7 @@
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.setAttribute('download', `한국퀀트알짜주_${new Date().toISOString().slice(0, 10)}.csv`);
+            link.setAttribute('download', `한국퀀트알짜주_국민연금수급_${new Date().toISOString().slice(0, 10)}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

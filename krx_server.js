@@ -84,6 +84,78 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
+// ⭐ [국민연금 지분율 및 최근 3개월 변동폭 정밀 파서]
+function parseNpsShareholding(summaryHtml) {
+    let npsRatio = null;
+    let npsChange3M = null;
+    if (!summaryHtml) return { npsRatio, npsChange3M };
+
+    // 1. 현재 국민연금 보유 지분율 파싱 (주요주주 목록)
+    const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let trMatch;
+    while ((trMatch = trRegex.exec(summaryHtml)) !== null) {
+        const tr = trMatch[1];
+        if (tr.includes('국민연금')) {
+            const cells = [...tr.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
+            for (let i = cells.length - 1; i >= 0; i--) {
+                const num = parseFinNumber(cells[i]);
+                if (num !== null && num >= 0 && num <= 100) {
+                    npsRatio = num;
+                    break;
+                }
+            }
+            if (npsRatio !== null) break;
+        }
+    }
+
+    // 2. 최근 3개월 국민연금 비중 변동폭(%p) 합산 (주주변동내역 요약)
+    const now = new Date();
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(now.getMonth() - 3);
+
+    const changeRowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let changeMatch;
+    let totalChange = 0;
+    let hasRecentChange = false;
+
+    while ((changeMatch = changeRowRegex.exec(summaryHtml)) !== null) {
+        const tr = changeMatch[1];
+        if (tr.includes('국민연금') && (tr.includes('+') || tr.includes('-') || tr.includes('장내') || tr.includes('매수') || tr.includes('매도') || tr.includes('기타'))) {
+            const cells = [...tr.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
+            const dateStr = cells.find(c => /^\d{2,4}[\/.-]\d{2}[\/.-]\d{2}$/.test(c));
+            if (dateStr) {
+                const parts = dateStr.split(/[\/.-]/);
+                let y = parseInt(parts[0], 10);
+                if (y < 100) y += 2000;
+                const m = parseInt(parts[1], 10) - 1;
+                const d = parseInt(parts[2], 10);
+                const tradeDate = new Date(y, m, d);
+
+                if (tradeDate >= threeMonthsAgo) {
+                    for (const c of cells) {
+                        if (c.startsWith('+') || c.startsWith('-') || /^-?\d+\.\d+$/.test(c)) {
+                            const val = parseFinNumber(c);
+                            if (val !== null && Math.abs(val) <= 15) {
+                                totalChange += val;
+                                hasRecentChange = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (hasRecentChange) {
+        npsChange3M = parseFloat(totalChange.toFixed(2));
+    } else {
+        npsChange3M = 0; // 변동 없음
+    }
+
+    return { npsRatio, npsChange3M };
+}
+
 // 1. 보통주 수집
 app.get('/api/sync-krx', async (req, res) => {
     const targetMarket = (req.query.market || 'ALL').toUpperCase();
@@ -108,6 +180,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             name: s.stockName,
                             market: mkt,
                             subSector: null,
+                            npsRatio: null,
+                            npsChange3M: null,
                             price: parseFinNumber(s.closePrice),
                             changeRate: parseFinNumber(s.fluctuationsRatio),
                             marketCap: parseFinNumber(s.marketValue),
@@ -155,6 +229,8 @@ app.get('/api/sync-krx', async (req, res) => {
                         return {
                             ...ns,
                             subSector: os.subSector || null,
+                            npsRatio: os.npsRatio ?? null,
+                            npsChange3M: os.npsChange3M ?? null,
                             latestSales: os.latestSales,
                             latestNetIncome: os.latestNetIncome,
                             opm: os.opm,
@@ -195,7 +271,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// ⭐ 2. WiseReport 퀀트 재무 + 네이버 일봉 차트 + WICS 기업개요 직수집 (Render 해외 IP 100% 뚫림)
+// ⭐ 2. WiseReport 퀀트 재무 + 차트 + WICS 세부종류 + 국민연금(NPS) 지분율 & 3M변동 동시 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -206,12 +282,11 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
         try {
             const chartUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${stk.code}&timeframe=day&count=130&requestType=0`;
             const wiseFinUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
-            // ⭐ [핵심] Render 클라우드에서도 무조건 열리는 와이즈리포트 공식 기업개요 페이지
             const wiseSummaryUrl = `https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${stk.code}`;
 
             const needFin = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
-            // ⭐ 기존에 '기타'이거나 비어있으면 무조건 WICS 세부업종을 새로 긁어옴!
-            const needWics = !stk.subSector || stk.subSector === '기타' || stk.subSector === '확인필요';
+            // 업종 또는 국민연금 데이터가 없으면 기업개요 페이지 호출
+            const needSummary = !stk.subSector || stk.subSector === '기타' || stk.npsRatio === undefined || !fastMode;
 
             const fetchTasks = [
                 fetch(chartUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
@@ -219,7 +294,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             if (needFin) {
                 fetchTasks.push(fetch(wiseFinUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
             }
-            if (needWics) {
+            if (needSummary) {
                 fetchTasks.push(fetch(wiseSummaryUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
             }
 
@@ -228,9 +303,9 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             
             let idx = 1;
             const wiseFinText = needFin && responses[idx] ? await responses[idx++].text() : null;
-            const summaryText = needWics && responses[idx] ? await responses[idx++].text() : null;
+            const summaryText = needSummary && responses[idx] ? await responses[idx++].text() : null;
 
-            // ⭐ WICS 세부종류 파싱 (예: WICS : 반도체와반도체장비)
+            // WICS 세부종류 파싱
             let subSector = (stk.subSector && stk.subSector !== '기타') ? stk.subSector : null;
             if (summaryText) {
                 const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(summaryText);
@@ -239,6 +314,15 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 }
             }
             if (!subSector) subSector = '기타';
+
+            // ⭐ 국민연금 지분율 및 3개월 변동폭 파싱
+            let npsRatio = stk.npsRatio ?? null;
+            let npsChange3M = stk.npsChange3M ?? null;
+            if (summaryText) {
+                const npsData = parseNpsShareholding(summaryText);
+                npsRatio = npsData.npsRatio;
+                npsChange3M = npsData.npsChange3M;
+            }
 
             let finData = {};
             if (wiseFinText) {
@@ -336,7 +420,9 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
             return {
                 code: stk.code,
-                subSector, // ⭐ 실제 WICS 세부업종 반영
+                subSector,
+                npsRatio,      // ⭐ 국민연금 보유 지분율 (%)
+                npsChange3M,   // ⭐ 최근 3개월 국민연금 비중 변동 (%p)
                 ...finData,
                 high52,
                 low52,
@@ -470,6 +556,8 @@ app.get('/api/stock-report', async (req, res) => {
             subSector = wicsMatch[1].replace(/&nbsp;/g, '').trim();
         }
 
+        const { npsRatio, npsChange3M } = parseNpsShareholding(summaryText);
+
         const candleMatches = [...chartText.matchAll(/data="([^"]+)"/g)].map(m => m[1].split('|'));
         let high52 = '-';
         let low52 = '-';
@@ -535,15 +623,17 @@ app.get('/api/stock-report', async (req, res) => {
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
         .container { max-width: 1000px; margin: 0 auto; background: var(--card); padding: 32px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
         .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
-        .title h1 { margin: 0; font-size: 26px; color: #0f172a; display: flex; align-items: center; gap: 10px; }
+        .title h1 { margin: 0; font-size: 26px; color: #0f172a; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .code-badge { font-size: 13px; background: #e0e7ff; color: #3730a3; padding: 4px 10px; border-radius: 6px; }
         .sector-badge { font-size: 13px; background: #fef3c7; color: #92400e; border: 1px solid #fde68a; padding: 4px 10px; border-radius: 6px; }
+        .nps-badge { font-size: 13px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 6px; }
         .btn-group { display: flex; gap: 8px; }
         .btn { padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); text-decoration: none; font-size: 12px; }
         .btn-primary { background: var(--primary); color: white; border: none; }
         .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .card { background: #f8fafc; padding: 14px; border-radius: 10px; border-left: 4px solid var(--primary); }
         .card.purple { border-left-color: #7c3aed; background: #faf5ff; }
+        .card.green { border-left-color: #059669; background: #ecfdf5; }
         .label { font-size: 11px; color: #64748b; margin-bottom: 4px; font-weight: 600; }
         .val { font-size: 18px; font-weight: 800; color: #0f172a; }
         .section-title { font-size: 16px; font-weight: 800; margin: 24px 0 10px; color: #334155; }
@@ -563,8 +653,9 @@ app.get('/api/stock-report', async (req, res) => {
                 <h1>
                     ${stockName} <span class="code-badge">${code}</span>
                     <span class="sector-badge">WICS: ${subSector}</span>
+                    <span class="nps-badge">🏛️ 국민연금: ${npsRatio !== null ? npsRatio + '%' : '미보유'} (${npsChange3M > 0 ? '+' : ''}${npsChange3M ?? 0}%p)</span>
                 </h1>
-                <p style="margin: 6px 0 0; color: #64748b; font-size: 12px;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
+                <p style="margin: 6px 0 0; color: #64748b; font-size: 12px; width: 100%;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
             </div>
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="window.print()">🖨️ PDF / 인쇄</button>
@@ -580,9 +671,9 @@ app.get('/api/stock-report', async (req, res) => {
         </div>
 
         <div class="grid-4">
+            <div class="card green"><div class="label">🏛️ 국민연금 보유지분율</div><div class="val">${npsRatio !== null ? npsRatio + '%' : '-'}</div></div>
+            <div class="card green"><div class="label">🏛️ 국민연금 3M 변동</div><div class="val" style="color: ${npsChange3M > 0 ? '#dc2626' : (npsChange3M < 0 ? '#2563eb' : '#0f172a')}">${npsChange3M !== null ? (npsChange3M > 0 ? '+' : '') + npsChange3M + '%p' : '-'}</div></div>
             <div class="card purple"><div class="label">52주 최고가 (근접도)</div><div class="val">${high52} <span style="font-size: 13px; color: #7c3aed;">(${high52Ratio})</span></div></div>
-            <div class="card purple"><div class="label">52주 최저가</div><div class="val">${low52}</div></div>
-            <div class="card purple"><div class="label">최근 3개월 수익률</div><div class="val">${return3M}</div></div>
             <div class="card purple"><div class="label">중기 추세 진단</div><div class="val" style="font-size: 14px;">${trendStatus}</div></div>
         </div>
 
