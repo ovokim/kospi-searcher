@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KOSPI & KOSDAQ 퀀트 알짜주 발굴 시스템</title>
+    <!-- ⭐ [SheetJS] 정식 마이크로소프트 엑셀(.xlsx) 산출물 생성 라이브러리 -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
         :root {
             --primary: #2563eb; --primary-hover: #1d4ed8; --bg: #f8fafc;
@@ -14,23 +16,27 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 16px; }
-        .container { max-width: 2200px; margin: 0 auto; }
+        .container { max-width: 2300px; margin: 0 auto; }
         
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 22px; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
         .market-badge { font-size: 12px; background: #e2e8f0; color: #334155; padding: 3px 8px; border-radius: 6px; }
         
+        .action-menu-group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
         .control-panel { background: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 16px; border: 1px solid var(--border); }
         .sync-box { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
         .sync-box input { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
-        .btn { padding: 8px 14px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .btn { padding: 8px 14px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
         .btn-primary { background: var(--primary); color: white; }
         .btn-primary:hover { background: var(--primary-hover); }
         .btn-secondary { background: #f1f5f9; color: #475569; }
         .btn-secondary:hover { background: #e2e8f0; }
         .btn-danger { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
-        .btn-success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-        .btn-success:hover { background: #bbf7d0; }
+        .btn-excel { background: #059669; color: white; border: 1px solid #047857; font-weight: 700; }
+        .btn-excel:hover { background: #047857; }
+        .btn-print { background: #475569; color: white; border: 1px solid #334155; }
+        .btn-print:hover { background: #334155; }
 
         .progress-container { width: 100%; background: #e2e8f0; border-radius: 8px; height: 12px; overflow: hidden; margin-top: 8px; display: none; }
         .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.2s ease; }
@@ -90,6 +96,18 @@
         .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
         .page-btn { padding: 6px 12px; border: 1px solid var(--border); background: white; border-radius: 6px; cursor: pointer; font-size: 12px; }
         .page-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+        /* ⭐ 인쇄 및 PDF 출력용 최적화 스타일 */
+        @media print {
+            body { background: white !important; padding: 0 !important; color: black !important; }
+            .control-panel, .pagination, .action-menu-group, .market-tabs, .status-bar > div:last-child { display: none !important; }
+            .container { max-width: 100% !important; margin: 0 !important; }
+            .table-wrap { box-shadow: none !important; border: 1px solid #000 !important; }
+            table { font-size: 9px !important; }
+            th, td { padding: 4px 6px !important; border-bottom: 1px solid #ccc !important; }
+            .star-fav, .btn-memo { display: none !important; }
+            th:nth-child(1), th:nth-child(2), td:nth-child(1), td:nth-child(2) { display: none !important; }
+        }
     </style>
 </head>
 <body>
@@ -99,13 +117,16 @@
                 📊 한국 전시장 퀀트 알짜주 스크리너
                 <span class="market-badge" id="currentMarketTag">전체 시장 (KOSPI & KOSDAQ)</span>
             </h1>
-            <div style="display: flex; gap: 8px; align-items: center;">
+            <div class="action-menu-group">
                 <div class="market-tabs">
                     <button class="market-tab active" onclick="setMarketTab('ALL')">전체</button>
                     <button class="market-tab" onclick="setMarketTab('KOSPI')">코스피</button>
                     <button class="market-tab" onclick="setMarketTab('KOSDAQ')">코스닥</button>
                 </div>
-                <button class="btn btn-success" onclick="exportToCSV()">📥 엑셀(CSV) 다운로드</button>
+                <!-- ⭐ 신규 산출물 & 출력 메뉴 -->
+                <button class="btn btn-excel" onclick="exportToExcel()" title="종목코드 깨짐 없는 순수 마이크로소프트 엑셀(.xlsx) 파일 생성">📊 엑셀(.xlsx) 산출물 다운로드</button>
+                <button class="btn btn-print" onclick="window.print()" title="화면의 테이블을 즉시 깔끔한 보고서로 인쇄 또는 PDF로 저장">🖨️ 테이블 인쇄 / PDF</button>
+                <button class="btn btn-secondary" onclick="exportToCSV()" title="텍스트 기반 CSV 파일 내보내기">📥 CSV</button>
             </div>
         </div>
 
@@ -710,6 +731,88 @@
             }
         }
 
+        // ⭐ [신규] 진짜 마이크로소프트 엑셀 (.xlsx) 완벽 서식 산출물 생성
+        function exportToExcel() {
+            if (!filteredStocks || filteredStocks.length === 0) {
+                return alert('내보낼 검색 결과가 없습니다.');
+            }
+
+            if (typeof XLSX === 'undefined') {
+                return alert('엑셀 생성 모듈을 불러오는 중입니다. 1~2초 후 다시 클릭해 주세요.');
+            }
+
+            const headers = [
+                '시장', '종목코드', '종목명', '세부종류(WICS)', 
+                '외인지분율(%)', '외인당일증감(%p)', 
+                '국민연금지분율(%)', '국민연금1W변동(%p)', '국민연금1M변동(%p)', '국민연금3M변동(%p)', 
+                '퀀트점수', '52주고점대비(%)', '3개월수익률(%)', '현재가(원)', 
+                '최근매출액(억)', '최근순이익(억)', '영업이익률(%)', '시가총액(억)', 
+                'PER(배)', 'PBR(배)', 'ROE(%)', 'PEG', 
+                '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'
+            ];
+
+            const dataRows = filteredStocks.map(s => [
+                s.market || 'KOSPI',
+                s.code ? s.code.toString() : '',
+                s.name || '',
+                s.subSector || '-',
+                s.foreignRatio !== null ? s.foreignRatio : '',
+                s.foreignChange !== null ? s.foreignChange : '',
+                s.npsRatio !== null ? s.npsRatio : '',
+                s.npsChange1W !== null ? s.npsChange1W : '',
+                s.npsChange1M !== null ? s.npsChange1M : '',
+                s.npsChange3M !== null ? s.npsChange3M : '',
+                s.quantScore !== null ? s.quantScore : '',
+                s.high52Ratio !== null ? s.high52Ratio : '',
+                s.return3M !== null ? s.return3M : '',
+                s.price !== null ? s.price : '',
+                s.latestSales !== null ? s.latestSales : '',
+                s.latestNetIncome !== null ? s.latestNetIncome : '',
+                s.opm !== null ? s.opm : '',
+                s.marketCap !== null ? s.marketCap : '',
+                s.per !== null ? s.per : '',
+                s.pbr !== null ? s.pbr : '',
+                s.roe !== null ? s.roe : '',
+                s.peg !== null ? s.peg : '',
+                s.salesGrowth !== null ? s.salesGrowth : '',
+                s.netIncomeGrowth !== null ? s.netIncomeGrowth : '',
+                s.debtRatio !== null ? s.debtRatio : '',
+                s.fcfYield !== null ? s.fcfYield : '',
+                s.dividendYield !== null ? s.dividendYield : '',
+                stockNotes[s.code] || ''
+            ]);
+
+            const wsData = [headers, ...dataRows];
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+            // 종목코드(컬럼 인덱스 1) 텍스트 강제 서식 지정 (앞자리 0 보존)
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for (let R = 1; R <= range.e.r; ++R) {
+                const cellAddr = XLSX.utils.encode_cell({ r: R, c: 1 });
+                if (ws[cellAddr]) {
+                    ws[cellAddr].t = 's'; // 문자열 강제
+                }
+            }
+
+            // 각 열의 너비 자동 최적화
+            const colWidths = headers.map((h, i) => {
+                let maxLen = h.length * 2;
+                for (let r = 0; r < Math.min(dataRows.length, 60); r++) {
+                    const val = dataRows[r][i] ? dataRows[r][i].toString() : '';
+                    if (val.length > maxLen) maxLen = val.length;
+                }
+                return { wch: Math.max(maxLen + 3, 11) };
+            });
+            ws['!cols'] = colWidths;
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "퀀트알짜주_수급분석");
+
+            const today = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, `한국퀀트알짜주_전체산출물_${today}.xlsx`);
+        }
+
+        // 기존 텍스트 CSV 내보내기 (보조용)
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
