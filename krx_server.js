@@ -84,57 +84,58 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// ⭐ [정밀 동적 스캔] 국민연금 지분율 및 최근 3개월 변동 파서
-function parseNpsShareholding(summaryHtml) {
+// ⭐ [c1070001.aspx 전용] 국민연금 지분율 및 3개월 변동 정밀 파서
+function parseNpsShareholding(shareHtml) {
     let npsRatio = null;
     let npsChange3M = null;
-    if (!summaryHtml) return { npsRatio, npsChange3M };
+    if (!shareHtml || !shareHtml.includes('국민연금')) {
+        return { npsRatio, npsChange3M };
+    }
 
-    // 1. 현재 국민연금 보유 지분율 파싱 (주요주주 목록 테이블)
     const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let trMatch;
-    while ((trMatch = trRegex.exec(summaryHtml)) !== null) {
+    const npsRows = [];
+
+    while ((trMatch = trRegex.exec(shareHtml)) !== null) {
         const tr = trMatch[1];
         if (tr.includes('국민연금')) {
-            const cells = [...tr.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
-            // 주요주주 테이블 행에서 0~100 사이의 퍼센트 지분율 탐색
-            for (let i = cells.length - 1; i >= 0; i--) {
-                const num = parseFinNumber(cells[i]);
-                if (num !== null && num > 0 && num <= 100) {
-                    npsRatio = num;
-                    break;
-                }
-            }
-            if (npsRatio !== null) break;
+            const cells = [...tr.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)]
+                .map(m => m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').trim());
+            npsRows.push(cells);
         }
     }
 
-    // 국민연금 미보유 종목이면 종료
-    if (npsRatio === null) {
+    if (npsRows.length === 0) {
         return { npsRatio: null, npsChange3M: null };
     }
 
-    // 2. 주주 변동내역 테이블 전체 동적 스캔 (컬럼 위치 무관하게 날짜 및 변동지분율 자동 검출)
+    // 1. 현재 국민연금 보유지분율(npsRatio) 추출
+    for (const cells of npsRows) {
+        for (let i = 0; i < cells.length; i++) {
+            const num = parseFinNumber(cells[i]);
+            // 0% 초과 100% 이하의 지분율
+            if (num !== null && num > 0 && num <= 100 && cells[i].includes('.')) {
+                if (npsRatio === null || (cells.length <= 4 && num > npsRatio)) {
+                    npsRatio = num;
+                }
+            }
+        }
+    }
+
+    // 2. 최근 95일 이내 공시된 변동지분율 합산
     const now = new Date();
     const threeMonthsAgo = new Date();
-    threeMonthsAgo.setDate(now.getDate() - 95); // 여유 마진 95일 적용
+    threeMonthsAgo.setDate(now.getDate() - 95);
 
     let totalChange3M = 0;
     let has3MChange = false;
-    let latestAnyChange = null; // 90일 외 직전 변동 백업용
+    let latestAnyChange = null;
 
-    const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let rowMatch;
-    while ((rowMatch = rowRegex.exec(summaryHtml)) !== null) {
-        const tr = rowMatch[1];
-        if (!tr.includes('국민연금')) continue;
-
-        const cells = [...tr.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
-        if (cells.length < 3) continue;
-
-        // 셀 중 날짜(YY/MM/DD or YYYY/MM/DD)가 있는 셀 탐색
+    for (const cells of npsRows) {
         let tradeDate = null;
         let dateIdx = -1;
+
+        // 거래일자/최종거래일 탐색 (YY/MM/DD or YYYY/MM/DD)
         for (let i = 0; i < cells.length; i++) {
             const m = cells[i].match(/^(\d{2,4})[\/.-](\d{2})[\/.-](\d{2})$/);
             if (m) {
@@ -148,28 +149,30 @@ function parseNpsShareholding(summaryHtml) {
             }
         }
 
-        // 변동지분율 탐색 (날짜 셀 이후 또는 특정 인덱스에서 -20 ~ +20 범위의 수치)
-        let rowChange = null;
-        for (let i = 0; i < cells.length; i++) {
-            if (i === dateIdx) continue;
-            const rawVal = cells[i];
-            // '+' 기호가 있거나 소수점이 있고 절대값이 20 이하인 변동 지분율 후보
-            if (/^[+-]?\d+(\.\d+)?%?$/.test(rawVal.replace(/,/g, ''))) {
-                const val = parseFinNumber(rawVal);
-                if (val !== null && Math.abs(val) > 0 && Math.abs(val) <= 15) {
-                    // 보통 주식수(큰 정수)나 보유지분(npsRatio와 일치)이 아닌 변동치 선택
-                    if (val !== npsRatio) {
-                        rowChange = val;
+        if (tradeDate && dateIdx !== -1) {
+            let rowChange = null;
+
+            // 변동지분율 컬럼 탐색 (날짜 이후 셀 중 ±15 이내의 소수점 수치)
+            for (let i = 0; i < cells.length; i++) {
+                if (i === dateIdx) continue;
+                const text = cells[i];
+                if (/^[+-]?\d+(\.\d+)?%?$/.test(text)) {
+                    const val = parseFinNumber(text);
+                    if (val !== null && Math.abs(val) > 0 && Math.abs(val) <= 15) {
+                        if (val !== npsRatio) {
+                            rowChange = val;
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        if (rowChange !== null) {
-            if (latestAnyChange === null) latestAnyChange = rowChange;
-            if (tradeDate && tradeDate >= threeMonthsAgo) {
-                totalChange3M += rowChange;
-                has3MChange = true;
+            if (rowChange !== null) {
+                if (latestAnyChange === null) latestAnyChange = rowChange;
+                if (tradeDate >= threeMonthsAgo) {
+                    totalChange3M += rowChange;
+                    has3MChange = true;
+                }
             }
         }
     }
@@ -303,7 +306,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. 퀀트 재무 + 차트(외인 지분 및 실질 증감 계산 보강) + WICS + 국민연금 수집
+// 2. 퀀트 재무 + 차트(외인 지분/증감) + WICS & 국민연금 수급(c1070001.aspx) 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -314,11 +317,11 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
         try {
             const chartJsonUrl = `https://fchart.stock.naver.com/siseJson.naver?symbol=${stk.code}&requestType=0&count=130&timeframe=day`;
             const wiseFinUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
-            const wiseSummaryUrl = `https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${stk.code}`;
+            // ⭐ [핵심 교체] 지분 변동사항이 포함된 c1070001.aspx 호출!
+            const wiseShareUrl = `https://navercomp.wisereport.co.kr/v2/company/c1070001.aspx?cmp_cd=${stk.code}`;
 
             const needFin = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
-            // ⭐ [수정] 수급/업종 누락 방지를 위해 summary 호출 조건 엄격화
-            const needSummary = !stk.subSector || stk.subSector === '기타' || stk.npsRatio === null || stk.npsChange3M === null || !fastMode;
+            const needShare = !stk.subSector || stk.subSector === '기타' || stk.npsRatio === null || stk.npsChange3M === null || !fastMode;
 
             const fetchTasks = [
                 fetch(chartJsonUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) })
@@ -326,8 +329,8 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             if (needFin) {
                 fetchTasks.push(fetch(wiseFinUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
             }
-            if (needSummary) {
-                fetchTasks.push(fetch(wiseSummaryUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
+            if (needShare) {
+                fetchTasks.push(fetch(wiseShareUrl, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(7000) }));
             }
 
             const responses = await Promise.all(fetchTasks);
@@ -335,28 +338,28 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             
             let idx = 1;
             const wiseFinText = needFin && responses[idx] ? await responses[idx++].text() : null;
-            const summaryText = needSummary && responses[idx] ? await responses[idx++].text() : null;
+            const shareText = needShare && responses[idx] ? await responses[idx++].text() : null;
 
             // WICS 세부종류 파싱
             let subSector = (stk.subSector && stk.subSector !== '기타') ? stk.subSector : null;
-            if (summaryText) {
-                const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(summaryText);
+            if (shareText) {
+                const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(shareText);
                 if (wicsMatch && wicsMatch[1]) {
                     subSector = wicsMatch[1].replace(/&nbsp;/g, '').trim();
                 }
             }
             if (!subSector) subSector = stk.subSector || '기타';
 
-            // 국민연금 파싱 (동적 컬럼 정밀 스캔)
+            // ⭐ 국민연금 지분율 및 3개월 변동 파싱
             let npsRatio = stk.npsRatio ?? null;
             let npsChange3M = stk.npsChange3M ?? null;
-            if (summaryText) {
-                const npsData = parseNpsShareholding(summaryText);
+            if (shareText) {
+                const npsData = parseNpsShareholding(shareText);
                 npsRatio = npsData.npsRatio;
                 npsChange3M = npsData.npsChange3M;
             }
 
-            // 일봉 시세 & 외국인 지분율 및 실질 증감 계산
+            // 일봉 시세 & 외국인 지분율 및 당일 증감 계산
             let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
             let foreignRatio = stk.foreignRatio ?? null;
             let foreignChange = stk.foreignChange ?? null;
@@ -396,21 +399,15 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                         isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
                     }
 
-                    // ⭐ [정밀 외인 수급] 유효 외국인 소진율 행 추출 및 다일간 실질 변동 추적
                     const validFrgnRows = rows.filter(r => !isNaN(parseFloat(r[6])));
                     if (validFrgnRows.length >= 2) {
-                        const lastRow = validFrgnRows[validFrgnRows.length - 1];
-                        const curFrgn = parseFloat(lastRow[6]);
+                        const curFrgn = parseFloat(validFrgnRows[validFrgnRows.length - 1][6]);
                         foreignRatio = parseFloat(curFrgn.toFixed(2));
 
-                        // 1차: 직전 거래일과의 차이 계산
                         let diff = curFrgn - parseFloat(validFrgnRows[validFrgnRows.length - 2][6]);
-
-                        // 2차: 주말/휴일 등으로 직전일 차이가 0.00%p인 경우, 최근 5거래일 역순 탐색으로 실질 변동 포착
                         if (Math.abs(diff) < 0.001) {
                             for (let k = validFrgnRows.length - 3; k >= Math.max(0, validFrgnRows.length - 6); k--) {
-                                const pastFrgn = parseFloat(validFrgnRows[k][6]);
-                                const pastDiff = curFrgn - pastFrgn;
+                                const pastDiff = curFrgn - parseFloat(validFrgnRows[k][6]);
                                 if (Math.abs(pastDiff) >= 0.01) {
                                     diff = pastDiff;
                                     break;
@@ -532,26 +529,26 @@ app.get('/api/stock-report', async (req, res) => {
     if (!code) return res.status(400).send('종목코드가 필요합니다.');
 
     try {
-        const [naverResp, wiseResp, chartResp, summaryResp] = await Promise.all([
+        const [naverResp, wiseResp, chartResp, shareResp] = await Promise.all([
             fetch(`https://m.stock.naver.com/api/stock/${code}/basic`, { headers: FETCH_HEADERS }),
             fetch(`https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${code}&fin_typ=0&freq_typ=Y`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
             fetch(`https://fchart.stock.naver.com/siseJson.naver?symbol=${code}&requestType=0&count=130&timeframe=day`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) }),
-            fetch(`https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${code}`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
+            fetch(`https://navercomp.wisereport.co.kr/v2/company/c1070001.aspx?cmp_cd=${code}`, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(8000) })
         ]);
 
         const basic = await naverResp.json();
         const wiseHtml = await wiseResp.text();
         const chartRawText = await chartResp.text();
-        const summaryText = await summaryResp.text();
+        const shareText = await shareResp.text();
         const { years, rowData } = parseWiseReportHtml(wiseHtml);
 
         let subSector = '기타';
-        const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(summaryText);
+        const wicsMatch = /WICS\s*:\s*([^<\r\n\t&;,.]+)/i.exec(shareText);
         if (wicsMatch && wicsMatch[1]) {
             subSector = wicsMatch[1].replace(/&nbsp;/g, '').trim();
         }
 
-        const { npsRatio, npsChange3M } = parseNpsShareholding(summaryText);
+        const { npsRatio, npsChange3M } = parseNpsShareholding(shareText);
 
         let high52 = '-';
         let low52 = '-';
