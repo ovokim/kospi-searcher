@@ -84,12 +84,13 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// 국민연금 파서
+// ⭐ [엄격한 최근 3개월(90일) 기준 국민연금 파서]
 function parseNpsShareholding(summaryHtml) {
     let npsRatio = null;
     let npsChange3M = null;
     if (!summaryHtml) return { npsRatio, npsChange3M };
 
+    // 1. 현재 국민연금 보유 지분율 파싱 (주요주주 목록)
     const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let trMatch;
     while ((trMatch = trRegex.exec(summaryHtml)) !== null) {
@@ -107,21 +108,30 @@ function parseNpsShareholding(summaryHtml) {
         }
     }
 
+    // 국민연금 미보유 종목은 변동폭도 null (미보유 처리)
+    if (npsRatio === null) {
+        return { npsRatio: null, npsChange3M: null };
+    }
+
+    // 2. 정확히 최근 90일(3개월) 이내 공시 변동만 합산
     const now = new Date();
     const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(now.getMonth() - 3);
+    threeMonthsAgo.setDate(now.getDate() - 90);
 
     const changeRowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let changeMatch;
-    let totalChange = 0;
-    let hasRecentChange = false;
+    let totalChange3M = 0;
+    let has3MChange = false;
 
     while ((changeMatch = changeRowRegex.exec(summaryHtml)) !== null) {
         const tr = changeMatch[1];
-        if (tr.includes('국민연금') && (tr.includes('+') || tr.includes('-') || tr.includes('장내') || tr.includes('매수') || tr.includes('매도') || tr.includes('기타'))) {
+        if (tr.includes('국민연금')) {
             const cells = [...tr.matchAll(/<(?:td|th)[^>]*>([\s\S]*?)<\/(?:td|th)>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
-            const dateStr = cells.find(c => /^\d{2,4}[\/.-]\d{2}[\/.-]\d{2}$/.test(c));
-            if (dateStr) {
+            const dateStr = cells[0];
+            const changeStr = cells[2] || cells[1] || '';
+            const changeVal = parseFinNumber(changeStr);
+
+            if (dateStr && /^\d{2,4}[\/.-]\d{2}[\/.-]\d{2}$/.test(dateStr)) {
                 const parts = dateStr.split(/[\/.-]/);
                 let y = parseInt(parts[0], 10);
                 if (y < 100) y += 2000;
@@ -129,27 +139,19 @@ function parseNpsShareholding(summaryHtml) {
                 const d = parseInt(parts[2], 10);
                 const tradeDate = new Date(y, m, d);
 
+                // ⭐ 최근 90일 이내 공시만 엄격히 합산 (과거 데이터 배제)
                 if (tradeDate >= threeMonthsAgo) {
-                    for (const c of cells) {
-                        if (c.startsWith('+') || c.startsWith('-') || /^-?\d+\.\d+$/.test(c)) {
-                            const val = parseFinNumber(c);
-                            if (val !== null && Math.abs(val) <= 15) {
-                                totalChange += val;
-                                hasRecentChange = true;
-                                break;
-                            }
-                        }
+                    if (changeVal !== null && Math.abs(changeVal) <= 20) {
+                        totalChange3M += changeVal;
+                        has3MChange = true;
                     }
                 }
             }
         }
     }
 
-    if (hasRecentChange) {
-        npsChange3M = parseFloat(totalChange.toFixed(2));
-    } else {
-        npsChange3M = 0;
-    }
+    // 최근 3개월 내 변동이 있었으면 합산값, 없었으면 0 (변동 없음)
+    npsChange3M = has3MChange ? parseFloat(totalChange3M.toFixed(2)) : 0;
 
     return { npsRatio, npsChange3M };
 }
@@ -180,8 +182,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             subSector: null,
                             npsRatio: null,
                             npsChange3M: null,
-                            foreignRatio: null,   // ⭐ 외국인 지분율 (%)
-                            foreignChange: null,  // ⭐ 외국인 당일 증감 (%p)
+                            foreignRatio: null,
+                            foreignChange: null,
                             price: parseFinNumber(s.closePrice),
                             changeRate: parseFinNumber(s.fluctuationsRatio),
                             marketCap: parseFinNumber(s.marketValue),
@@ -272,7 +274,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// ⭐ 2. 퀀트 재무 + 차트(외국인소진율/증감 시계열 내장) + WICS + 국민연금 동시 수집
+// 2. 퀀트 재무 + 차트(휴일에도 최근 거래일 대비 외인 증감 계산) + WICS + 엄격한 국민연금 3M 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -281,7 +283,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
 
     const results = await Promise.all(stocks.map(async (stk) => {
         try {
-            // ⭐ [핵심] 네이버 siseJson은 일봉 시세뿐만 아니라 '외국인소진율'을 일자별로 기본 제공함!
             const chartJsonUrl = `https://fchart.stock.naver.com/siseJson.naver?symbol=${stk.code}&requestType=0&count=130&timeframe=day`;
             const wiseFinUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
             const wiseSummaryUrl = `https://navercomp.wisereport.co.kr/v2/company/c1010001.aspx?cmp_cd=${stk.code}`;
@@ -316,7 +317,7 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             }
             if (!subSector) subSector = '기타';
 
-            // 국민연금 지분율 및 3개월 변동 파싱
+            // 국민연금 파싱 (최근 90일 엄격 적용)
             let npsRatio = stk.npsRatio ?? null;
             let npsChange3M = stk.npsChange3M ?? null;
             if (summaryText) {
@@ -325,17 +326,20 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 npsChange3M = npsData.npsChange3M;
             }
 
-            // ⭐ 일봉 시세 & 외국인 지분율 및 당일 증감 파싱
-            // siseJson 형식: [["날짜", "시가", "고가", "저가", "종가", "거래량", "외국인소진율"], ...]
+            // 일봉 시세 & 외국인 지분율 및 당일 증감 계산
             let high52 = null, low52 = null, high52Ratio = null, ma60 = null, ma120 = null, return3M = null, isUptrend = false;
             let foreignRatio = stk.foreignRatio ?? null;
             let foreignChange = stk.foreignChange ?? null;
 
             try {
-                const cleanJsonStr = chartRawText.replace(/'/g, '"').trim();
+                const cleanJsonStr = chartRawText
+                    .replace(/\r?\n|\r/g, '')
+                    .replace(/\s+/g, ' ')
+                    .replace(/'/g, '"')
+                    .trim();
+
                 const chartData = JSON.parse(cleanJsonStr);
-                // 첫 행 헤더 제외한 실제 데이터 행
-                const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && r[0] !== '날짜');
+                const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && /^\d{8}$/.test(r[0].toString().trim()));
 
                 if (rows.length > 0) {
                     const highs = rows.map(r => parseFloat(r[2])).filter(v => !isNaN(v));
@@ -362,24 +366,23 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                         isUptrend = curPrice >= ma60 && (!ma120 || curPrice >= ma120);
                     }
 
-                    // ⭐ 외국인 지분율(%) 및 당일 증가/감소분(%p) 계산
-                    const latestRow = rows[rows.length - 1];
-                    const prevRow = rows.length > 1 ? rows[rows.length - 2] : null;
+                    // 휴일에도 마지막 실제 거래일 2개 비교
+                    const validFrgnRows = rows.filter(r => !isNaN(parseFloat(r[6])));
+                    if (validFrgnRows.length >= 2) {
+                        const lastRow = validFrgnRows[validFrgnRows.length - 1];
+                        const prevRow = validFrgnRows[validFrgnRows.length - 2];
 
-                    const curFrgn = parseFloat(latestRow[6]);
-                    if (!isNaN(curFrgn)) {
+                        const curFrgn = parseFloat(lastRow[6]);
+                        const prevFrgn = parseFloat(prevRow[6]);
+
                         foreignRatio = parseFloat(curFrgn.toFixed(2));
-                        if (prevRow) {
-                            const prevFrgn = parseFloat(prevRow[6]);
-                            if (!isNaN(prevFrgn)) {
-                                foreignChange = parseFloat((curFrgn - prevFrgn).toFixed(2));
-                            }
-                        }
+                        foreignChange = parseFloat((curFrgn - prevFrgn).toFixed(2));
+                    } else if (validFrgnRows.length === 1) {
+                        foreignRatio = parseFloat(parseFloat(validFrgnRows[0][6]).toFixed(2));
+                        foreignChange = 0;
                     }
                 }
-            } catch (err) {
-                // JSON 파싱 실패 시 fallback
-            }
+            } catch (err) { }
 
             let finData = {};
             if (wiseFinText) {
@@ -451,8 +454,8 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 subSector,
                 npsRatio,
                 npsChange3M,
-                foreignRatio,  // ⭐ 외인 지분율
-                foreignChange, // ⭐ 외인 당일 증감
+                foreignRatio,
+                foreignChange,
                 ...finData,
                 high52,
                 low52,
@@ -597,9 +600,9 @@ app.get('/api/stock-report', async (req, res) => {
         let foreignChange = '-';
 
         try {
-            const cleanJsonStr = chartRawText.replace(/'/g, '"').trim();
+            const cleanJsonStr = chartRawText.replace(/\r?\n|\r/g, '').replace(/\s+/g, ' ').replace(/'/g, '"').trim();
             const chartData = JSON.parse(cleanJsonStr);
-            const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && r[0] !== '날짜');
+            const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && /^\d{8}$/.test(r[0].toString().trim()));
 
             if (rows.length > 0) {
                 const highs = rows.map(r => parseFloat(r[2])).filter(v => !isNaN(v));
@@ -625,18 +628,15 @@ app.get('/api/stock-report', async (req, res) => {
                     trendStatus = cur >= c60 ? '📈 상승추세 (60일선 위)' : '📉 하락추세 (60일선 아래)';
                 }
 
-                const latestRow = rows[rows.length - 1];
-                const prevRow = rows.length > 1 ? rows[rows.length - 2] : null;
-                const curFrgn = parseFloat(latestRow[6]);
-                if (!isNaN(curFrgn)) {
+                const validFrgnRows = rows.filter(r => !isNaN(parseFloat(r[6])));
+                if (validFrgnRows.length >= 2) {
+                    const lastRow = validFrgnRows[validFrgnRows.length - 1];
+                    const prevRow = validFrgnRows[validFrgnRows.length - 2];
+                    const curFrgn = parseFloat(lastRow[6]);
+                    const prevFrgn = parseFloat(prevRow[6]);
                     foreignRatio = curFrgn.toFixed(2) + '%';
-                    if (prevRow) {
-                        const prevFrgn = parseFloat(prevRow[6]);
-                        if (!isNaN(prevFrgn)) {
-                            const diff = (curFrgn - prevFrgn).toFixed(2);
-                            foreignChange = (diff > 0 ? '+' : '') + diff + '%p';
-                        }
-                    }
+                    const diff = (curFrgn - prevFrgn).toFixed(2);
+                    foreignChange = (diff > 0 ? '+' : '') + diff + '%p';
                 }
             }
         } catch (e) { }
@@ -707,7 +707,7 @@ app.get('/api/stock-report', async (req, res) => {
                     ${stockName} <span class="code-badge">${code}</span>
                     <span class="sector-badge">WICS: ${subSector}</span>
                     <span class="frgn-badge">🌍 외인: ${foreignRatio} (${foreignChange})</span>
-                    <span class="nps-badge">🏛️ 국민연금: ${npsRatio !== null ? npsRatio + '%' : '미보유'} (${npsChange3M > 0 ? '+' : ''}${npsChange3M ?? 0}%p)</span>
+                    <span class="nps-badge">🏛️ 국민연금: ${npsRatio !== null ? npsRatio + '%' : '미보유'} (${npsChange3M !== null ? (npsChange3M > 0 ? '+' : '') + npsChange3M + '%p' : '-'})</span>
                 </h1>
                 <p style="margin: 6px 0 0; color: #64748b; font-size: 12px; width: 100%;">기준일: ${new Date().toLocaleDateString('ko-KR')} 밸류에이션 및 모멘텀 리포트</p>
             </div>
@@ -813,9 +813,9 @@ async function runBackgroundAutoSync() {
                     let foreignRatio = null, foreignChange = null;
 
                     try {
-                        const cleanJsonStr = chartRawText.replace(/'/g, '"').trim();
+                        const cleanJsonStr = chartRawText.replace(/\r?\n|\r/g, '').replace(/\s+/g, ' ').replace(/'/g, '"').trim();
                         const chartData = JSON.parse(cleanJsonStr);
-                        const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && r[0] !== '날짜');
+                        const rows = chartData.filter(r => Array.isArray(r) && r.length >= 7 && /^\d{8}$/.test(r[0].toString().trim()));
                         if (rows.length > 0) {
                             const highs = rows.map(r => parseFloat(r[2])).filter(v => !isNaN(v));
                             const lows = rows.map(r => parseFloat(r[3])).filter(v => !isNaN(v));
@@ -826,19 +826,18 @@ async function runBackgroundAutoSync() {
                             if (high52 && curPrice > 0) high52Ratio = parseFloat(((curPrice / high52) * 100).toFixed(1));
                             if (closes.length >= 60) {
                                 const c60 = Math.round(closes.slice(-60).reduce((a, b) => a + b, 0) / 60);
-                                const b60 = closes[closes.length - 60];
-                                if (b60 > 0) return3M = parseFloat((((curPrice - b60) / b60) * 100).toFixed(2));
+                                const base60 = closes[closes.length - 60];
+                                if (base60 > 0) return3M = parseFloat((((curPrice - base60) / base60) * 100).toFixed(2));
                                 isUptrend = curPrice >= c60;
                             }
-                            const latestRow = rows[rows.length - 1];
-                            const prevRow = rows.length > 1 ? rows[rows.length - 2] : null;
-                            const curFrgn = parseFloat(latestRow[6]);
-                            if (!isNaN(curFrgn)) {
+                            const validFrgnRows = rows.filter(r => !isNaN(parseFloat(r[6])));
+                            if (validFrgnRows.length >= 2) {
+                                const lastRow = validFrgnRows[validFrgnRows.length - 1];
+                                const prevRow = validFrgnRows[validFrgnRows.length - 2];
+                                const curFrgn = parseFloat(lastRow[6]);
+                                const prevFrgn = parseFloat(prevRow[6]);
                                 foreignRatio = parseFloat(curFrgn.toFixed(2));
-                                if (prevRow) {
-                                    const prevFrgn = parseFloat(prevRow[6]);
-                                    if (!isNaN(prevFrgn)) foreignChange = parseFloat((curFrgn - prevFrgn).toFixed(2));
-                                }
+                                foreignChange = parseFloat((curFrgn - prevFrgn).toFixed(2));
                             }
                         }
                     } catch (e) { }
