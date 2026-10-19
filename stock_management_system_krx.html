@@ -14,7 +14,7 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text-main); padding: 16px; }
-        .container { max-width: 2050px; margin: 0 auto; }
+        .container { max-width: 2200px; margin: 0 auto; }
         
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { font-size: 22px; font-weight: 800; color: #1e293b; display: flex; align-items: center; gap: 8px; }
@@ -47,41 +47,6 @@
         .btn-preset.gold { background: var(--gold-bg); color: var(--gold); border-color: var(--gold-border); }
         .btn-preset.purple { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
 
-        .quality-section {
-            background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-            border: 2px solid #fcd34d;
-            border-radius: 10px;
-            padding: 12px 16px;
-            margin-bottom: 12px;
-        }
-        .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
-        .section-header h3 { font-size: 13px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
-        .quality-title { color: #92400e; }
-        .section-desc { font-size: 11px; }
-
-        .momentum-section {
-            background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
-            border: 2px solid #c4b5fd;
-            border-radius: 10px;
-            padding: 12px 16px;
-            margin-bottom: 16px;
-        }
-        .momentum-title { color: #5b21b6; }
-        
-        .filter-flex-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-        .input-group { display: flex; flex-direction: column; gap: 3px; }
-        .input-group label { font-size: 11px; font-weight: 700; }
-        .input-group input[type="number"] { padding: 5px 8px; border-radius: 6px; font-size: 12px; background: white; border: 1px solid #cbd5e1; width: 135px; }
-
-        .toggle-btn {
-            display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; font-weight: 700;
-            background: white; padding: 6px 12px; border-radius: 6px; border: 1.5px solid #cbd5e1; user-select: none; transition: 0.2s;
-        }
-        .toggle-btn.active-green { background: #dcfce7; color: #166534; border-color: #86efac; }
-        .toggle-btn.active-purple { background: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
-        .toggle-btn.active-fav { background: #fef9c3; color: #a16207; border-color: #fde047; }
-        .toggle-btn input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; }
-
         .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; }
         .filter-card { background: #f8fafc; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
         .filter-card-title { font-size: 11px; font-weight: 700; color: var(--text-muted); }
@@ -101,8 +66,8 @@
         
         .stock-link { color: var(--primary); text-decoration: none; font-weight: 700; cursor: pointer; }
         .stock-link:hover { text-decoration: underline; }
-        .pos { color: var(--danger); font-weight: 600; }
-        .neg { color: var(--primary); font-weight: 600; }
+        .pos { color: var(--danger); font-weight: 700; }
+        .neg { color: var(--primary); font-weight: 700; }
         
         .star-fav { cursor: pointer; font-size: 14px; color: #cbd5e1; transition: 0.15s; }
         .star-fav.active { color: #eab308; }
@@ -147,17 +112,17 @@
         <div class="control-panel">
             <div class="sync-box">
                 <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 210px;">
-                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/이평선/모멘텀/수급을 25초 만에 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
-                <button class="btn btn-secondary" id="btnFullSync" onclick="startSync(false)" title="모든 종목의 재무제표까지 새로 긁어오는 전체 정밀 갱신">🚀 정밀 전체 동기화</button>
+                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/수급/WICS 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
+                <button class="btn btn-secondary" id="btnFullSync" onclick="startSync(false)" title="전체 재무제표까지 새로 긁어오는 정밀 전체 갱신">🚀 정밀 전체 동기화</button>
                 <button class="btn btn-danger" id="btnSyncAbort" onclick="abortSync()" style="display: none;">⛔ 중단</button>
                 <button class="btn btn-secondary" onclick="loadCachedData()">📁 캐시 불러오기</button>
                 
-                <label class="toggle-btn" id="lbl_favOnly">
-                    <input type="checkbox" id="chkFavOnly" onchange="toggleFavOnly(); applyFilters();">
+                <label class="toggle-btn" id="lbl_favOnly" style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; font-weight: 700; background: white; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);">
+                    <input type="checkbox" id="chkFavOnly" onchange="applyFilters()">
                     <span>⭐ 관심종목만</span>
                 </label>
 
-                <label class="toggle-btn" id="lbl_skipPenny" style="background: #f8fafc;" title="시가총액 300억 미만 잡주를 제외하여 속도 30% 추가 향상">
+                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; font-weight: 700; background: #f8fafc; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);">
                     <input type="checkbox" id="chkSkipPenny" checked>
                     <span>체급주만 (시총 300억↑)</span>
                 </label>
@@ -185,69 +150,6 @@
                 <button class="btn-preset" onclick="applyPreset('reset')" style="margin-left: auto;">🔄 전체 초기화</button>
             </div>
 
-            <!-- [독립 1] 알짜주 체급 섹션 -->
-            <div class="quality-section">
-                <div class="section-header">
-                    <h3 class="quality-title">💎 체급 & 지속성장 [알짜주 펀더멘털 필터]</h3>
-                    <span class="section-desc" style="color: #b45309;">1억→50억 기저효과 잡주를 거르고, 탄탄한 체급으로 매년 우상향하는 진짜 알짜배기 선별</span>
-                </div>
-                <div class="filter-flex-row">
-                    <div class="input-group">
-                        <label style="color: #78350f;">최소 연매출액 (억 원)</label>
-                        <input type="number" id="q_minSales" placeholder="예: 500" oninput="applyFilters()">
-                    </div>
-                    <div class="input-group">
-                        <label style="color: #78350f;">최소 연순이익 (억 원)</label>
-                        <input type="number" id="q_minNetIncome" placeholder="예: 50" oninput="applyFilters()">
-                    </div>
-                    <div class="input-group">
-                        <label style="color: #78350f;">최소 영업이익률 (%)</label>
-                        <input type="number" step="0.5" id="q_minOpm" placeholder="예: 7" oninput="applyFilters()">
-                    </div>
-                    <label class="toggle-btn" id="btn_continuous" style="margin-top: 16px;">
-                        <input type="checkbox" id="q_chkContinuous" onchange="applyFilters()">
-                        <span>👑 3개년 연속성장 (매출+순익 동시 우상향)</span>
-                    </label>
-                    <label class="toggle-btn" id="btn_cashQuality" style="margin-top: 16px;">
-                        <input type="checkbox" id="q_chkCashQuality" onchange="applyFilters()">
-                        <span>✅ 현금창출 우수 (영업현금흐름 > 순익)</span>
-                    </label>
-                </div>
-            </div>
-
-            <!-- [독립 2] 모멘텀 & 가격 추세 섹션 -->
-            <div class="momentum-section">
-                <div class="section-header">
-                    <h3 class="momentum-title">📈 모멘텀 & 가격 추세 [가치함정 극복 필터]</h3>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <span class="section-desc" style="color: #6d28d9;">하락·역배열 가치함정을 피하고 주가 에너지가 응축된 추세주 선별</span>
-                        <button class="btn" style="padding: 3px 8px; font-size: 11px; background: white; border: 1px solid #cbd5e1;" onclick="resetMomentumDefaults()">🔄 기본값 복원</button>
-                    </div>
-                </div>
-                <div class="filter-flex-row">
-                    <label class="toggle-btn" id="lbl_uptrend">
-                        <input type="checkbox" id="m_chkUptrend" onchange="toggleMomentumStyle(); applyFilters();">
-                        <span>📈 상승추세 턴어라운드 (현재가 > 60일선)</span>
-                    </label>
-
-                    <label class="toggle-btn" id="lbl_high52">
-                        <input type="checkbox" id="m_chkHigh52" onchange="toggleMomentumStyle(); applyFilters();">
-                        <span>🎯 52주 신고가 근접주 (돌파형)</span>
-                    </label>
-
-                    <div class="input-group">
-                        <label style="color: #4c1d95;">신고가 근접도 기준 (% 이상)</label>
-                        <input type="number" step="1" id="m_minHigh52Ratio" value="80" placeholder="기본: 80" oninput="applyFilters()">
-                    </div>
-
-                    <div class="input-group">
-                        <label style="color: #4c1d95;">최근 3개월 수익률 기준 (% 이상)</label>
-                        <input type="number" step="0.5" id="m_minReturn3M" value="0" placeholder="기본: 0" oninput="applyFilters()">
-                    </div>
-                </div>
-            </div>
-
-            <!-- 일반 구간(Min ~ Max) 필터 영역 -->
             <div class="filter-grid">
                 <div class="filter-card">
                     <span class="filter-card-title">종합 퀀트 스코어 (점)</span>
@@ -314,14 +216,6 @@
                     </div>
                 </div>
                 <div class="filter-card">
-                    <span class="filter-card-title">순익성장률 (YoY %)</span>
-                    <div class="range-inputs">
-                        <input type="number" step="0.5" id="f_min_netIncomeGrowth" placeholder="최소" oninput="applyFilters()">
-                        <span>~</span>
-                        <input type="number" step="0.5" id="f_max_netIncomeGrowth" placeholder="최대" oninput="applyFilters()">
-                    </div>
-                </div>
-                <div class="filter-card">
                     <span class="filter-card-title">부채비율 (%)</span>
                     <div class="range-inputs">
                         <input type="number" step="1" id="f_min_debtRatio" placeholder="최소" oninput="applyFilters()">
@@ -337,21 +231,13 @@
                         <input type="number" step="0.5" id="f_max_fcfYield" placeholder="최대" oninput="applyFilters()">
                     </div>
                 </div>
-                <div class="filter-card">
-                    <span class="filter-card-title">배당수익률 (%)</span>
-                    <div class="range-inputs">
-                        <input type="number" step="0.5" id="f_min_dividendYield" placeholder="최소" oninput="applyFilters()">
-                        <span>~</span>
-                        <input type="number" step="0.5" id="f_max_dividendYield" placeholder="최대" oninput="applyFilters()">
-                    </div>
-                </div>
             </div>
         </div>
 
         <div class="status-bar">
             <div>
                 총 <strong id="totalCount">0</strong>개 중 <strong id="filteredCount">0</strong>개 발굴
-                <span style="margin-left: 10px; font-size: 11px;">(⭐ 별표: 관심저장 | 📝 메모 | 종목명 클릭: 심층리포트 | 🏛️ 국민연금 지분/변동 클릭 시 정렬)</span>
+                <span style="margin-left: 10px; font-size: 11px;">(헤더 클릭: 정렬 | 🏛️ 국민연금 1W/1M/3M 클릭 시 기간별 집중매수순 정렬)</span>
             </div>
             <div>
                 <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize(this.value)">
@@ -375,6 +261,8 @@
                         <th onclick="sortTable('foreignRatio')" style="background: #eff6ff; color: #1e40af;">🌍외인지분</th>
                         <th onclick="sortTable('foreignChange')" style="background: #eff6ff; color: #1e40af;">🌍외인당일증감</th>
                         <th onclick="sortTable('npsRatio')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금지분</th>
+                        <th onclick="sortTable('npsChange1W')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금1W</th>
+                        <th onclick="sortTable('npsChange1M')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금1M</th>
                         <th onclick="sortTable('npsChange3M')" style="background: #ecfdf5; color: #065f46;">🏛️국민연금3M</th>
                         <th onclick="sortTable('quantScore')">퀀트점수</th>
                         <th onclick="sortTable('high52Ratio')">52주고점대비</th>
@@ -416,7 +304,6 @@
         let favorites = new Set(JSON.parse(localStorage.getItem('favStocks') || '[]'));
         let stockNotes = JSON.parse(localStorage.getItem('stockNotes') || '{}');
 
-        // ⭐ [에러 방지 핵심] 100% Null-Safe 헬퍼 함수
         const getElVal = (id) => {
             const el = document.getElementById(id);
             return el ? el.value.trim() : '';
@@ -587,7 +474,7 @@
 
                     const completed = Math.min(i + chunkSize, total);
                     const percent = Math.round(10 + (completed / total) * 88);
-                    updateProgress(percent, `[2단계 ${modeTitle}] 재무 & 수급 동기화 (${completed}/${total}개)...`);
+                    updateProgress(percent, `[2단계 ${modeTitle}] 재무 & 국민연금/외인 수급 동기화 (${completed}/${total}개)...`);
 
                     if (i % 150 === 0) {
                         calculateQuantScores(rawStocks);
@@ -608,36 +495,6 @@
             }
         }
 
-        function toggleMomentumStyle() {
-            const chkUp = document.getElementById('m_chkUptrend');
-            const lblUp = document.getElementById('lbl_uptrend');
-            if (lblUp && chkUp) lblUp.classList.toggle('active-green', chkUp.checked);
-
-            const chkHigh = document.getElementById('m_chkHigh52');
-            const lblHigh = document.getElementById('lbl_high52');
-            if (lblHigh && chkHigh) lblHigh.classList.toggle('active-purple', chkHigh.checked);
-        }
-
-        function toggleFavOnly() {
-            const chk = document.getElementById('chkFavOnly');
-            const lbl = document.getElementById('lbl_favOnly');
-            if (lbl && chk) lbl.classList.toggle('active-fav', chk.checked);
-        }
-
-        function resetMomentumDefaults() {
-            const chkUp = document.getElementById('m_chkUptrend');
-            const chkHigh = document.getElementById('m_chkHigh52');
-            const inRatio = document.getElementById('m_minHigh52Ratio');
-            const inReturn = document.getElementById('m_minReturn3M');
-
-            if (chkUp) chkUp.checked = false;
-            if (chkHigh) chkHigh.checked = false;
-            if (inRatio) inRatio.value = '80';
-            if (inReturn) inReturn.value = '0';
-            toggleMomentumStyle();
-            applyFilters();
-        }
-
         function changePageSize(val) {
             pageSize = parseInt(val, 10);
             currentPage = 1;
@@ -645,54 +502,28 @@
         }
 
         function applyPreset(type) {
-            document.querySelectorAll('.range-inputs input, .quality-section input[type="number"]').forEach(el => el.value = '');
-            document.querySelectorAll('.quality-section input[type="checkbox"]').forEach(el => el.checked = false);
-            
+            document.querySelectorAll('.range-inputs input').forEach(el => el.value = '');
             const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-            const setChk = (id, chk) => { const el = document.getElementById(id); if (el) el.checked = chk; };
-
-            setChk('m_chkUptrend', false);
-            setChk('m_chkHigh52', false);
-            setVal('m_minHigh52Ratio', '80');
-            setVal('m_minReturn3M', '0');
 
             if (type === 'peterLynch') {
                 setVal('f_max_marketCap', '10000');
                 setVal('f_min_salesGrowth', '10');
-                setVal('f_min_netIncomeGrowth', '15');
-                setVal('f_max_peg', '1.2');
                 setVal('f_max_debtRatio', '100');
             } else if (type === 'cashCow') {
                 setVal('f_min_fcfYield', '4.0');
                 setVal('f_max_debtRatio', '70');
-                setVal('f_min_dividendYield', '2.5');
-                setChk('q_chkCashQuality', true);
             } else if (type === 'undervalued') {
                 setVal('f_max_per', '10');
                 setVal('f_max_pbr', '1.0');
                 setVal('f_min_roe', '10');
             } else if (type === 'qualityGrowth') {
-                setVal('q_minSales', '500');
-                setVal('q_minNetIncome', '50');
-                setChk('q_chkContinuous', true);
                 setVal('f_max_per', '15');
                 setVal('f_min_fcfYield', '2.0');
-            } else if (type === 'turnaround') {
-                setVal('q_minSales', '500');
-                setChk('m_chkUptrend', true);
-                setVal('m_minReturn3M', '5');
-            } else if (type === 'breakout') {
-                setVal('q_minSales', '500');
-                setChk('m_chkHigh52', true);
-                setVal('m_minHigh52Ratio', '85');
-                setVal('f_max_per', '18');
             } else if (type === 'npsBuy') {
                 setVal('f_min_npsRatio', '5.0');
                 setVal('f_max_per', '20');
-                setChk('m_chkUptrend', true);
             }
 
-            toggleMomentumStyle();
             applyFilters();
         }
 
@@ -707,7 +538,7 @@
         function editNote(code, name, event) {
             event.stopPropagation();
             const current = stockNotes[code] || '';
-            const next = prompt(`[${name} (${code})] 투자 메모 및 매수가/목표가:`, current);
+            const next = prompt(`[${name} (${code})] 투자 메모:`, current);
             if (next !== null) {
                 if (next.trim() === '') delete stockNotes[code];
                 else stockNotes[code] = next.trim();
@@ -720,31 +551,12 @@
             const kw = getElVal('searchKeyword').toLowerCase();
             const favOnly = getElChecked('chkFavOnly');
 
-            const minSales = parseFloat(getElVal('q_minSales')) || -Infinity;
-            const minNet = parseFloat(getElVal('q_minNetIncome')) || -Infinity;
-            const minOpm = parseFloat(getElVal('q_minOpm')) || -Infinity;
-            const chkContinuous = getElChecked('q_chkContinuous');
-            const chkCashQuality = getElChecked('q_chkCashQuality');
-
-            const chkUptrend = getElChecked('m_chkUptrend');
-            const chkHigh52 = getElChecked('m_chkHigh52');
-            
-            const rawHigh52Val = getElVal('m_minHigh52Ratio');
-            const minHigh52Ratio = rawHigh52Val !== '' ? parseFloat(rawHigh52Val) : 80;
-
-            const rawReturnVal = getElVal('m_minReturn3M');
-            const minReturn3M = rawReturnVal !== '' ? parseFloat(rawReturnVal) : 0;
-
-            // ⭐ [핵심 방어 코드] getRange가 null을 절대 반환하지 않음
             const getRange = (id) => {
                 const elMin = document.getElementById(`f_min_${id}`);
                 const elMax = document.getElementById(`f_max_${id}`);
                 const minVal = (elMin && elMin.value.trim() !== '') ? parseFloat(elMin.value) : -Infinity;
                 const maxVal = (elMax && elMax.value.trim() !== '') ? parseFloat(elMax.value) : Infinity;
-                return {
-                    min: isNaN(minVal) ? -Infinity : minVal,
-                    max: isNaN(maxVal) ? Infinity : maxVal
-                };
+                return { min: isNaN(minVal) ? -Infinity : minVal, max: isNaN(maxVal) ? Infinity : maxVal };
             };
 
             const rScore = getRange('quantScore');
@@ -754,12 +566,9 @@
             const rPer = getRange('per');
             const rPbr = getRange('pbr');
             const rRoe = getRange('roe');
-            const rPeg = getRange('peg');
             const rSales = getRange('salesGrowth');
-            const rNet = getRange('netIncomeGrowth');
             const rDebt = getRange('debtRatio');
             const rFcfY = getRange('fcfYield');
-            const rDivY = getRange('dividendYield');
 
             filteredStocks = rawStocks.filter(s => {
                 if (selectedMarket !== 'ALL' && s.market && s.market !== selectedMarket) return false;
@@ -770,20 +579,6 @@
                     const matchCode = s.code && s.code.includes(kw);
                     const matchSub = s.subSector && s.subSector.toLowerCase().includes(kw);
                     if (!matchName && !matchCode && !matchSub) return false;
-                }
-
-                if (minSales !== -Infinity && (s.latestSales === null || s.latestSales < minSales)) return false;
-                if (minNet !== -Infinity && (s.latestNetIncome === null || s.latestNetIncome < minNet)) return false;
-                if (minOpm !== -Infinity && (s.opm === null || s.opm < minOpm)) return false;
-                if (chkContinuous && !s.isContinuousGrowth) return false;
-                if (chkCashQuality && !s.ocfQuality) return false;
-
-                if (chkUptrend) {
-                    if (!s.isUptrend) return false;
-                    if (s.return3M !== null && s.return3M < minReturn3M) return false;
-                }
-                if (chkHigh52) {
-                    if (s.high52Ratio === null || s.high52Ratio < minHigh52Ratio) return false;
                 }
 
                 const inRange = (val, range) => {
@@ -799,12 +594,9 @@
                 if (!inRange(s.per, rPer)) return false;
                 if (!inRange(s.pbr, rPbr)) return false;
                 if (!inRange(s.roe, rRoe)) return false;
-                if (!inRange(s.peg, rPeg)) return false;
                 if (!inRange(s.salesGrowth, rSales)) return false;
-                if (!inRange(s.netIncomeGrowth, rNet)) return false;
                 if (!inRange(s.debtRatio, rDebt)) return false;
                 if (!inRange(s.fcfYield, rFcfY)) return false;
-                if (!inRange(s.dividendYield, rDivY)) return false;
 
                 return true;
             });
@@ -842,6 +634,13 @@
             const start = (currentPage - 1) * pageSize;
             const paged = filteredStocks.slice(start, start + pageSize);
 
+            const formatChange = (val, isHolding) => {
+                if (!isHolding || val === null || val === undefined) return `<span style="color:#cbd5e1;">-</span>`;
+                if (val > 0) return `<strong class="pos">+${val}%p</strong>`;
+                if (val < 0) return `<strong class="neg">${val}%p</strong>`;
+                return `<span style="color:#94a3b8;">0.00%p</span>`;
+            };
+
             paged.forEach(s => {
                 const isFav = favorites.has(s.code);
                 const memo = stockNotes[s.code] || '';
@@ -850,23 +649,7 @@
                 if ((s.quantScore || 0) >= 70) scoreClass = 'score-high';
                 else if ((s.quantScore || 0) >= 55) scoreClass = 'score-mid';
 
-                // 🌍 외인 당일 증감 표현 (+빨강 / -파랑 / 0회색)
-                let frgnChangeHtml = '-';
-                if (s.foreignChange !== null && s.foreignChange !== undefined) {
-                    if (s.foreignChange > 0) frgnChangeHtml = `<strong class="pos">+${s.foreignChange}%p</strong>`;
-                    else if (s.foreignChange < 0) frgnChangeHtml = `<strong class="neg">${s.foreignChange}%p</strong>`;
-                    else frgnChangeHtml = `<span style="color:#94a3b8;">0.00%p</span>`;
-                }
-
-                // 🏛️ 국민연금 3M 변동 표현 (+빨강 / -파랑 / 미보유 또는 미변동)
-                let npsChangeHtml = '-';
-                if (s.npsRatio === null || s.npsRatio === undefined) {
-                    npsChangeHtml = `<span style="color:#cbd5e1;">-</span>`;
-                } else if (s.npsChange3M !== null && s.npsChange3M !== undefined) {
-                    if (s.npsChange3M > 0) npsChangeHtml = `<strong class="pos">+${s.npsChange3M}%p</strong>`;
-                    else if (s.npsChange3M < 0) npsChangeHtml = `<strong class="neg">${s.npsChange3M}%p</strong>`;
-                    else npsChangeHtml = `<span style="color:#94a3b8;">0.00%p</span>`;
-                }
+                const hasNps = s.npsRatio !== null && s.npsRatio !== undefined;
 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
@@ -876,16 +659,16 @@
                     <td>
                         <span class="badge ${s.market === 'KOSDAQ' ? 'badge-kosdaq' : 'badge-kospi'}">${s.market || 'KOSPI'}</span>
                         <a class="stock-link" onclick="openReport('${s.code}')" title="심층 HTML 리포트">${s.name} ↗</a>
-                        ${s.isContinuousGrowth ? '<span class="badge badge-gold" title="3개년 연속 매출+순익 우상향">👑 3년연속</span>' : ''}
-                        ${s.ocfQuality ? '<span class="badge badge-green" title="영업현금흐름 > 순이익">✅ 현금우수</span>' : ''}
+                        ${s.isContinuousGrowth ? '<span class="badge badge-gold" title="3개년 연속 우상향">👑 3년연속</span>' : ''}
                         ${s.isUptrend ? '<span class="badge badge-green" title="상승추세">📈 상승</span>' : ''}
-                        ${(s.high52Ratio || 0) >= 80 ? '<span class="badge badge-purple" title="신고가 근접">🎯 신고가</span>' : ''}
                     </td>
                     <td><span class="badge-subsector">${s.subSector || '-'}</span></td>
                     <td style="background: #f8faff;"><strong>${s.foreignRatio !== null && s.foreignRatio !== undefined ? s.foreignRatio + '%' : '-'}</strong></td>
-                    <td style="background: #f8faff;">${frgnChangeHtml}</td>
-                    <td style="background: #f0fdf4;"><strong>${s.npsRatio !== null && s.npsRatio !== undefined ? s.npsRatio + '%' : '-'}</strong></td>
-                    <td style="background: #f0fdf4;">${npsChangeHtml}</td>
+                    <td style="background: #f8faff;">${formatChange(s.foreignChange, true)}</td>
+                    <td style="background: #f0fdf4;"><strong>${hasNps ? s.npsRatio + '%' : '-'}</strong></td>
+                    <td style="background: #f0fdf4;">${formatChange(s.npsChange1W, hasNps)}</td>
+                    <td style="background: #f0fdf4;">${formatChange(s.npsChange1M, hasNps)}</td>
+                    <td style="background: #f0fdf4;">${formatChange(s.npsChange3M, hasNps)}</td>
                     <td><span class="score-pill ${scoreClass}">${s.quantScore ?? '-'}점</span></td>
                     <td><strong>${s.high52Ratio !== null ? s.high52Ratio + '%' : '-'}</strong></td>
                     <td class="${(s.return3M || 0) > 0 ? 'pos' : 'neg'}"><strong>${s.return3M !== null ? (s.return3M > 0 ? '+' : '') + s.return3M + '%' : '-'}</strong></td>
@@ -897,7 +680,7 @@
                     <td>${s.per ?? '-'}</td>
                     <td>${s.pbr ?? '-'}</td>
                     <td>${s.roe !== null ? s.roe + '%' : '-'}</td>
-                    <td>${s.peg !== null ? `<span class="badge ${s.peg <= 1 ? 'badge-green' : ''}">${s.peg}</span>` : '-'}</td>
+                    <td>${s.peg !== null ? s.peg : '-'}</td>
                     <td class="${(s.salesGrowth || 0) > 0 ? 'pos' : 'neg'}">${s.salesGrowth !== null ? s.salesGrowth + '%' : '-'}</td>
                     <td class="${(s.netIncomeGrowth || 0) > 0 ? 'pos' : 'neg'}">${s.netIncomeGrowth !== null ? s.netIncomeGrowth + '%' : '-'}</td>
                     <td>${s.debtRatio !== null ? s.debtRatio + '%' : '-'}</td>
@@ -930,7 +713,7 @@
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
-            const headers = ['시장', '종목코드', '종목명', '세부종류(WICS)', '외인지분율(%)', '외인당일증감(%p)', '국민연금지분율(%)', '국민연금3M변동(%p)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
+            const headers = ['시장', '종목코드', '종목명', '세부종류(WICS)', '외인지분율(%)', '외인당일증감(%p)', '국민연금지분율(%)', '국민연금1W변동(%p)', '국민연금1M변동(%p)', '국민연금3M변동(%p)', '퀀트스코어', '52주고점대비(%)', '3개월수익률(%)', '현재가', '최근매출(억)', '최근순익(억)', '영업이익률(%)', '시가총액(억)', 'PER', 'PBR', 'ROE(%)', 'PEG', '매출성장률(%)', '순익성장률(%)', '부채비율(%)', 'FCF수익률(%)', '배당수익률(%)', '투자메모'];
             
             const rows = filteredStocks.map(s => [
                 s.market || 'KOSPI',
@@ -940,6 +723,8 @@
                 s.foreignRatio ?? '',
                 s.foreignChange ?? '',
                 s.npsRatio ?? '',
+                s.npsChange1W ?? '',
+                s.npsChange1M ?? '',
                 s.npsChange3M ?? '',
                 s.quantScore ?? '',
                 s.high52Ratio ?? '',
@@ -965,7 +750,7 @@
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.setAttribute('download', `한국퀀트알짜주_수급종합_${new Date().toISOString().slice(0, 10)}.csv`);
+            link.setAttribute('download', `한국퀀트알짜주_국민연금기간별수급_${new Date().toISOString().slice(0, 10)}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

@@ -84,12 +84,15 @@ function parseWiseReportHtml(html) {
     return { years, rowData };
 }
 
-// ⭐ [c1070001.aspx 전용] 국민연금 지분율 및 3개월 변동 정밀 파서
+// ⭐ [c1070001.aspx 전용] 국민연금 지분율 및 1W / 1M / 3M 기간별 변동 파서
 function parseNpsShareholding(shareHtml) {
     let npsRatio = null;
+    let npsChange1W = null;
+    let npsChange1M = null;
     let npsChange3M = null;
+
     if (!shareHtml || !shareHtml.includes('국민연금')) {
-        return { npsRatio, npsChange3M };
+        return { npsRatio, npsChange1W, npsChange1M, npsChange3M };
     }
 
     const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
@@ -106,14 +109,13 @@ function parseNpsShareholding(shareHtml) {
     }
 
     if (npsRows.length === 0) {
-        return { npsRatio: null, npsChange3M: null };
+        return { npsRatio: null, npsChange1W: null, npsChange1M: null, npsChange3M: null };
     }
 
     // 1. 현재 국민연금 보유지분율(npsRatio) 추출
     for (const cells of npsRows) {
         for (let i = 0; i < cells.length; i++) {
             const num = parseFinNumber(cells[i]);
-            // 0% 초과 100% 이하의 지분율
             if (num !== null && num > 0 && num <= 100 && cells[i].includes('.')) {
                 if (npsRatio === null || (cells.length <= 4 && num > npsRatio)) {
                     npsRatio = num;
@@ -122,20 +124,20 @@ function parseNpsShareholding(shareHtml) {
         }
     }
 
-    // 2. 최근 95일 이내 공시된 변동지분율 합산
+    // 2. 1W(8일), 1M(32일), 3M(95일) 기간별 변동 합산
     const now = new Date();
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setDate(now.getDate() - 95);
+    const oneWeekAgo = new Date(now.getTime() - (8 * 24 * 60 * 60 * 1000));
+    const oneMonthAgo = new Date(now.getTime() - (32 * 24 * 60 * 60 * 1000));
+    const threeMonthsAgo = new Date(now.getTime() - (95 * 24 * 60 * 60 * 1000));
 
-    let totalChange3M = 0;
-    let has3MChange = false;
-    let latestAnyChange = null;
+    let total1W = 0, has1W = false;
+    let total1M = 0, has1M = false;
+    let total3M = 0, has3M = false;
 
     for (const cells of npsRows) {
         let tradeDate = null;
         let dateIdx = -1;
 
-        // 거래일자/최종거래일 탐색 (YY/MM/DD or YYYY/MM/DD)
         for (let i = 0; i < cells.length; i++) {
             const m = cells[i].match(/^(\d{2,4})[\/.-](\d{2})[\/.-](\d{2})$/);
             if (m) {
@@ -151,8 +153,6 @@ function parseNpsShareholding(shareHtml) {
 
         if (tradeDate && dateIdx !== -1) {
             let rowChange = null;
-
-            // 변동지분율 컬럼 탐색 (날짜 이후 셀 중 ±15 이내의 소수점 수치)
             for (let i = 0; i < cells.length; i++) {
                 if (i === dateIdx) continue;
                 const text = cells[i];
@@ -168,24 +168,27 @@ function parseNpsShareholding(shareHtml) {
             }
 
             if (rowChange !== null) {
-                if (latestAnyChange === null) latestAnyChange = rowChange;
+                if (tradeDate >= oneWeekAgo) {
+                    total1W += rowChange;
+                    has1W = true;
+                }
+                if (tradeDate >= oneMonthAgo) {
+                    total1M += rowChange;
+                    has1M = true;
+                }
                 if (tradeDate >= threeMonthsAgo) {
-                    totalChange3M += rowChange;
-                    has3MChange = true;
+                    total3M += rowChange;
+                    has3M = true;
                 }
             }
         }
     }
 
-    if (has3MChange) {
-        npsChange3M = parseFloat(totalChange3M.toFixed(2));
-    } else if (latestAnyChange !== null) {
-        npsChange3M = parseFloat(latestAnyChange.toFixed(2));
-    } else {
-        npsChange3M = 0;
-    }
+    npsChange1W = has1W ? parseFloat(total1W.toFixed(2)) : 0;
+    npsChange1M = has1M ? parseFloat(total1M.toFixed(2)) : 0;
+    npsChange3M = has3M ? parseFloat(total3M.toFixed(2)) : 0;
 
-    return { npsRatio, npsChange3M };
+    return { npsRatio, npsChange1W, npsChange1M, npsChange3M };
 }
 
 // 1. 보통주 수집
@@ -213,6 +216,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             market: mkt,
                             subSector: null,
                             npsRatio: null,
+                            npsChange1W: null,
+                            npsChange1M: null,
                             npsChange3M: null,
                             foreignRatio: null,
                             foreignChange: null,
@@ -263,6 +268,8 @@ app.get('/api/sync-krx', async (req, res) => {
                             ...ns,
                             subSector: os.subSector || null,
                             npsRatio: os.npsRatio ?? null,
+                            npsChange1W: os.npsChange1W ?? null,
+                            npsChange1M: os.npsChange1M ?? null,
                             npsChange3M: os.npsChange3M ?? null,
                             foreignRatio: os.foreignRatio ?? null,
                             foreignChange: os.foreignChange ?? null,
@@ -306,7 +313,7 @@ app.get('/api/sync-krx', async (req, res) => {
     }
 });
 
-// 2. 퀀트 재무 + 차트(외인 지분/증감) + WICS & 국민연금 수급(c1070001.aspx) 수집
+// 2. 퀀트 재무 + 차트(외인 지분/증감) + WICS & 국민연금 수급(1W, 1M, 3M) 수집
 app.post('/api/sync-wisereport-batch', async (req, res) => {
     const { stocks, fastMode } = req.body;
     if (!stocks || !Array.isArray(stocks)) {
@@ -317,7 +324,6 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
         try {
             const chartJsonUrl = `https://fchart.stock.naver.com/siseJson.naver?symbol=${stk.code}&requestType=0&count=130&timeframe=day`;
             const wiseFinUrl = `https://navercomp.wisereport.co.kr/v2/company/cF1001.aspx?cmp_cd=${stk.code}&fin_typ=0&freq_typ=Y`;
-            // ⭐ [핵심 교체] 지분 변동사항이 포함된 c1070001.aspx 호출!
             const wiseShareUrl = `https://navercomp.wisereport.co.kr/v2/company/c1070001.aspx?cmp_cd=${stk.code}`;
 
             const needFin = !(fastMode && stk.latestSales !== null && stk.latestSales !== undefined);
@@ -350,12 +356,16 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
             }
             if (!subSector) subSector = stk.subSector || '기타';
 
-            // ⭐ 국민연금 지분율 및 3개월 변동 파싱
+            // ⭐ 국민연금 지분율 및 1W / 1M / 3M 기간별 변동 파싱
             let npsRatio = stk.npsRatio ?? null;
+            let npsChange1W = stk.npsChange1W ?? null;
+            let npsChange1M = stk.npsChange1M ?? null;
             let npsChange3M = stk.npsChange3M ?? null;
             if (shareText) {
                 const npsData = parseNpsShareholding(shareText);
                 npsRatio = npsData.npsRatio;
+                npsChange1W = npsData.npsChange1W;
+                npsChange1M = npsData.npsChange1M;
                 npsChange3M = npsData.npsChange3M;
             }
 
@@ -491,6 +501,8 @@ app.post('/api/sync-wisereport-batch', async (req, res) => {
                 code: stk.code,
                 subSector,
                 npsRatio,
+                npsChange1W,
+                npsChange1M,
                 npsChange3M,
                 foreignRatio,
                 foreignChange,
@@ -548,7 +560,7 @@ app.get('/api/stock-report', async (req, res) => {
             subSector = wicsMatch[1].replace(/&nbsp;/g, '').trim();
         }
 
-        const { npsRatio, npsChange3M } = parseNpsShareholding(shareText);
+        const { npsRatio, npsChange1W, npsChange1M, npsChange3M } = parseNpsShareholding(shareText);
 
         let high52 = '-';
         let low52 = '-';
@@ -623,6 +635,8 @@ app.get('/api/stock-report', async (req, res) => {
             return `<tr><td class="row-title">${k}</td>${tds}</tr>`;
         }).join('');
 
+        const fmtNps = (v) => v !== null ? ((v > 0 ? '+' : '') + v + '%p') : '-';
+
         const html = `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -660,7 +674,7 @@ app.get('/api/stock-report', async (req, res) => {
                     ${stockName} <span class="code-badge">${code}</span>
                     <span class="sector-badge">WICS: ${subSector}</span>
                     <span class="frgn-badge">🌍 외인: ${foreignRatio} (${foreignChange})</span>
-                    <span class="nps-badge">🏛️ 국민연금: ${npsRatio !== null ? npsRatio + '%' : '미보유'} (${npsChange3M !== null ? (npsChange3M > 0 ? '+' : '') + npsChange3M + '%p' : '-'})</span>
+                    <span class="nps-badge">🏛️ 국민연금: ${npsRatio !== null ? npsRatio + '%' : '미보유'} (1W: ${fmtNps(npsChange1W)} | 1M: ${fmtNps(npsChange1M)} | 3M: ${fmtNps(npsChange3M)})</span>
                 </h1>
             </div>
         </div>
@@ -673,7 +687,7 @@ app.get('/api/stock-report', async (req, res) => {
         <div class="grid-4">
             <div class="card blue"><div class="label">🌍 외국인 지분율</div><div class="val">${foreignRatio}</div></div>
             <div class="card blue"><div class="label">🌍 외국인 당일 증감</div><div class="val">${foreignChange}</div></div>
-            <div class="card green"><div class="label">🏛️ 국민연금 지분율</div><div class="val">${npsRatio !== null ? npsRatio + '%' : '-'}</div></div>
+            <div class="card green"><div class="label">🏛️ 국민연금 보유지분</div><div class="val">${npsRatio !== null ? npsRatio + '%' : '-'}</div></div>
             <div class="card purple"><div class="label">52주 최고가 (근접도)</div><div class="val">${high52} <span style="font-size: 13px; color: #7c3aed;">(${high52Ratio})</span></div></div>
         </div>
         <div class="section-title">📊 최근 4개년 연간 재무 요약</div>
