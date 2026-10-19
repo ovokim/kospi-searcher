@@ -850,6 +850,7 @@
                 if ((s.quantScore || 0) >= 70) scoreClass = 'score-high';
                 else if ((s.quantScore || 0) >= 55) scoreClass = 'score-mid';
 
+                // 🌍 외인 당일 증감 표현 (+빨강 / -파랑 / 0회색)
                 let frgnChangeHtml = '-';
                 if (s.foreignChange !== null && s.foreignChange !== undefined) {
                     if (s.foreignChange > 0) frgnChangeHtml = `<strong class="pos">+${s.foreignChange}%p</strong>`;
@@ -857,8 +858,11 @@
                     else frgnChangeHtml = `<span style="color:#94a3b8;">0.00%p</span>`;
                 }
 
+                // 🏛️ 국민연금 3M 변동 표현 (+빨강 / -파랑 / 미보유 또는 미변동)
                 let npsChangeHtml = '-';
-                if (s.npsChange3M !== null && s.npsChange3M !== undefined) {
+                if (s.npsRatio === null || s.npsRatio === undefined) {
+                    npsChangeHtml = `<span style="color:#cbd5e1;">-</span>`;
+                } else if (s.npsChange3M !== null && s.npsChange3M !== undefined) {
                     if (s.npsChange3M > 0) npsChangeHtml = `<strong class="pos">+${s.npsChange3M}%p</strong>`;
                     else if (s.npsChange3M < 0) npsChangeHtml = `<strong class="neg">${s.npsChange3M}%p</strong>`;
                     else npsChangeHtml = `<span style="color:#94a3b8;">0.00%p</span>`;
