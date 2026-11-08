@@ -327,7 +327,10 @@
             applyFilters();
         }
 
-        async function loadCachedData() {
+		async function loadCachedData() {
+            const btn = document.querySelector('.sync-box .btn-primary');
+            if (btn) btn.innerText = '⏳ 불러오는 중...';
+
             try {
                 const res = await fetch('./kospi_cache.json?v=' + Date.now());
                 const json = await res.json();
@@ -336,9 +339,14 @@
                     rawStocks = list;
                     calculateQuantScores(rawStocks);
                     applyFilters();
+                    if (btn) {
+                        btn.innerText = `✅ ${list.length}개 로드 완료!`;
+                        setTimeout(() => { btn.innerText = '🔄 최신 데이터 불러오기'; }, 2000);
+                    }
                 }
             } catch (e) {
                 console.error('캐시 로드 오류:', e);
+                if (btn) btn.innerText = '❌ 로드 실패';
             }
         }
 

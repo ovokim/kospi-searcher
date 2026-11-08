@@ -46,13 +46,12 @@ function parseWiseReportHtml(html) {
     return rowData;
 }
 
-async function run() {
-    console.log('🚀 [1/2] KOSPI 전종목 시세 수집 시작...');
+async function fetchMarketStocks(marketName) {
+    console.log(`🚀 [${marketName}] 전종목 목록 수집 시작...`);
     let page = 1;
-    let allStocks = [];
-
+    const result = [];
     while (true) {
-        const url = `https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page=${page}&pageSize=100`;
+        const url = `https://m.stock.naver.com/api/stocks/marketValue/${marketName}?page=${page}&pageSize=100`;
         const resp = await fetch(url, { headers: FETCH_HEADERS });
         const data = await resp.json();
         const list = data.stocks || [];
@@ -60,7 +59,8 @@ async function run() {
 
         for (const s of list) {
             if (isPureStock(s)) {
-                allStocks.push({
+                result.push({
+                    market: marketName,
                     code: s.itemCode,
                     name: s.stockName,
                     price: parseFinNumber(s.closePrice),
@@ -75,11 +75,20 @@ async function run() {
         if (list.length < 100) break;
         page++;
     }
+    console.log(`✅ [${marketName}] 보통주 ${result.length}개 확보 완료.`);
+    return result;
+}
 
-    console.log(`✅ KOSPI ${allStocks.length}개 종목 확보 완료.`);
-    console.log('🚀 [2/2] WiseReport 퀀트 재무 지표 병렬 수집 시작...');
+async function run() {
+    // 1. 코스피와 코스닥 둘 다 수집!
+    const kospiList = await fetchMarketStocks('KOSPI');
+    const kosdaqList = await fetchMarketStocks('KOSDAQ');
+    const allStocks = [...kospiList, ...kosdaqList];
 
-    const chunkSize = 10;
+    console.log(`📊 전시장(KOSPI+KOSDAQ) 총 ${allStocks.length}개 보통주 퀀트 분석 시작...`);
+
+    // 2. 재무 지표 병렬 수집
+    const chunkSize = 15;
     for (let i = 0; i < allStocks.length; i += chunkSize) {
         const chunk = allStocks.slice(i, i + chunkSize);
         await Promise.all(chunk.map(async (stk) => {
@@ -94,9 +103,7 @@ async function run() {
                     if (!row) return [null, null];
                     const validVals = rowData[row].map(parseFinNumber).filter(v => v !== null);
                     if (validVals.length === 0) return [null, null];
-                    const latest = validVals[validVals.length - 1];
-                    const prev = validVals.length > 1 ? validVals[validVals.length - 2] : null;
-                    return [latest, prev];
+                    return [validVals[validVals.length - 1], validVals.length > 1 ? validVals[validVals.length - 2] : null];
                 };
 
                 const [latestSales, prevSales] = getLatestTwo('매출액');
@@ -125,13 +132,13 @@ async function run() {
             } catch (e) { }
         }));
 
-        if ((i + chunkSize) % 100 === 0 || i + chunkSize >= allStocks.length) {
+        if ((i + chunkSize) % 150 === 0 || i + chunkSize >= allStocks.length) {
             console.log(`진행률: ${Math.min(i + chunkSize, allStocks.length)} / ${allStocks.length}`);
         }
     }
 
     fs.writeFileSync(CACHE_FILE, JSON.stringify(allStocks, null, 2), 'utf8');
-    console.log('🎉 kospi_cache.json 업데이트 완료!');
+    console.log(`🎉 kospi_cache.json 저장 완료! 총 ${allStocks.length}개 종목`);
 }
 
 run();
