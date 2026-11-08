@@ -32,15 +32,10 @@
         .btn-primary:hover { background: var(--primary-hover); }
         .btn-secondary { background: #f1f5f9; color: #475569; }
         .btn-secondary:hover { background: #e2e8f0; }
-        .btn-danger { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
         .btn-excel { background: #059669; color: white; border: 1px solid #047857; font-weight: 700; }
         .btn-excel:hover { background: #047857; }
         .btn-print { background: #475569; color: white; border: 1px solid #334155; }
         .btn-print:hover { background: #334155; }
-
-        .progress-container { width: 100%; background: #e2e8f0; border-radius: 8px; height: 12px; overflow: hidden; margin-top: 8px; display: none; }
-        .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.2s ease; }
-        .progress-info { font-size: 12px; font-weight: 700; color: var(--primary); margin-top: 4px; display: flex; justify-content: space-between; }
 
         .market-tabs { display: flex; gap: 4px; background: #f1f5f9; padding: 3px; border-radius: 8px; }
         .market-tab { padding: 6px 14px; border-radius: 6px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: transparent; color: #64748b; }
@@ -97,7 +92,6 @@
         .page-btn { padding: 6px 12px; border: 1px solid var(--border); background: white; border-radius: 6px; cursor: pointer; font-size: 12px; }
         .page-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
 
-        /* ⭐ 인쇄 및 PDF 출력용 최적화 스타일 */
         @media print {
             body { background: white !important; padding: 0 !important; color: black !important; }
             .control-panel, .pagination, .action-menu-group, .market-tabs, .status-bar > div:last-child { display: none !important; }
@@ -123,20 +117,16 @@
                     <button class="market-tab" onclick="setMarketTab('KOSPI')">코스피</button>
                     <button class="market-tab" onclick="setMarketTab('KOSDAQ')">코스닥</button>
                 </div>
-                <!-- ⭐ 신규 산출물 & 출력 메뉴 -->
-                <button class="btn btn-excel" onclick="exportToExcel()" title="종목코드 깨짐 없는 순수 마이크로소프트 엑셀(.xlsx) 파일 생성">📊 엑셀(.xlsx) 산출물 다운로드</button>
-                <button class="btn btn-print" onclick="window.print()" title="화면의 테이블을 즉시 깔끔한 보고서로 인쇄 또는 PDF로 저장">🖨️ 테이블 인쇄 / PDF</button>
-                <button class="btn btn-secondary" onclick="exportToCSV()" title="텍스트 기반 CSV 파일 내보내기">📥 CSV</button>
+                <button class="btn btn-excel" onclick="exportToExcel()" title="종목코드 깨짐 없는 순수 마이크로소프트 엑셀(.xlsx) 파일 생성">📊 엑셀(.xlsx) 다운로드</button>
+                <button class="btn btn-print" onclick="window.print()" title="보고서 인쇄 또는 PDF 저장">🖨️ 인쇄 / PDF</button>
+                <button class="btn btn-secondary" onclick="exportToCSV()" title="CSV 내보내기">📥 CSV</button>
             </div>
         </div>
 
         <div class="control-panel">
             <div class="sync-box">
-                <input type="text" id="dartApiKey" placeholder="DART API Key 입력 (선택사항)" style="width: 210px;">
-                <button class="btn btn-primary" id="btnFastSync" onclick="startSync(true)" title="기존 재무 데이터를 유지하며 주가/수급/WICS 초고속 갱신">⚡ 초고속 동기화 (권장)</button>
-                <button class="btn btn-secondary" id="btnFullSync" onclick="startSync(false)" title="전체 재무제표까지 새로 긁어오는 정밀 전체 갱신">🚀 정밀 전체 동기화</button>
-                <button class="btn btn-danger" id="btnSyncAbort" onclick="abortSync()" style="display: none;">⛔ 중단</button>
-                <button class="btn btn-secondary" onclick="loadCachedData()">📁 캐시 불러오기</button>
+                <!-- ⭐ [정리 완료] 에러 없는 단일 최신 데이터 불러오기 버튼 -->
+                <button class="btn btn-primary" onclick="loadCachedData()" style="font-size: 14px;">🔄 최신 데이터 불러오기</button>
                 
                 <label class="toggle-btn" id="lbl_favOnly" style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; font-weight: 700; background: white; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);">
                     <input type="checkbox" id="chkFavOnly" onchange="applyFilters()">
@@ -144,30 +134,22 @@
                 </label>
 
                 <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; font-weight: 700; background: #f8fafc; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);">
-                    <input type="checkbox" id="chkSkipPenny" checked>
+                    <input type="checkbox" id="chkSkipPenny" onchange="applyFilters()" checked>
                     <span>체급주만 (시총 300억↑)</span>
                 </label>
 
-                <input type="text" id="searchKeyword" placeholder="종목명/코드/세부업종 검색..." style="width: 170px; margin-left: auto;" oninput="applyFilters()">
+                <span style="font-size: 12px; color: var(--text-muted); margin-left: 8px;">(평일 16:30 자동 갱신)</span>
+
+                <input type="text" id="searchKeyword" placeholder="종목명/코드/세부업종 검색..." style="width: 190px; margin-left: auto;" oninput="applyFilters()">
             </div>
 
-            <div class="progress-container" id="progressContainer">
-                <div class="progress-bar" id="progressBar"></div>
-            </div>
-            <div class="progress-info" id="progressInfo" style="display: none;">
-                <span id="progressText">동기화 준비 중...</span>
-                <span id="progressPercent">0%</span>
-            </div>
-
-            <div class="preset-box" style="margin-top: 14px;">
+            <div class="preset-box">
                 <span class="preset-title">🎯 실전 퀀트 프리셋:</span>
                 <button class="btn-preset" onclick="applyPreset('peterLynch')">🚀 피터린치형 (고성장 저평가 / PEG < 1.2)</button>
                 <button class="btn-preset" onclick="applyPreset('cashCow')">💰 버핏형 (FCF수익률 > 4% + 캐시카우)</button>
                 <button class="btn-preset" onclick="applyPreset('undervalued')">💎 정통 저평가 (저PER + 저PBR + 고ROE)</button>
                 <button class="btn-preset gold" onclick="applyPreset('qualityGrowth')">👑 지속성장 대장주 (3년연속성장)</button>
-                <button class="btn-preset purple" onclick="applyPreset('turnaround')">📈 바닥 탈출 턴어라운드 (이평선돌파)</button>
-                <button class="btn-preset purple" onclick="applyPreset('breakout')">🔥 52주 신고가 돌파 (주도주)</button>
-                <button class="btn-preset gold" onclick="applyPreset('npsBuy')">🏛️ 국민연금 집중매수 (지분 5%↑)</button>
+                <button class="btn-preset purple" onclick="applyPreset('npsBuy')">🏛️ 국민연금 집중매수 (지분 5%↑)</button>
                 <button class="btn-preset" onclick="applyPreset('reset')" style="margin-left: auto;">🔄 전체 초기화</button>
             </div>
 
@@ -277,7 +259,7 @@
                         <th style="width: 32px;">⭐</th>
                         <th style="width: 32px;">메모</th>
                         <th onclick="sortTable('code')">코드</th>
-                        <th onclick="sortTable('name')">종목명 (리포트)</th>
+                        <th onclick="sortTable('name')">종목명 (네이버)</th>
                         <th onclick="sortTable('subSector')">세부종류 (WICS)</th>
                         <th onclick="sortTable('foreignRatio')" style="background: #eff6ff; color: #1e40af;">🌍외인지분</th>
                         <th onclick="sortTable('foreignChange')" style="background: #eff6ff; color: #1e40af;">🌍외인당일증감</th>
@@ -319,8 +301,6 @@
         let sortKey = 'quantScore';
         let sortAsc = false;
         let selectedMarket = 'ALL';
-        let isSyncing = false;
-        let abortController = null;
 
         let favorites = new Set(JSON.parse(localStorage.getItem('favStocks') || '[]'));
         let stockNotes = JSON.parse(localStorage.getItem('stockNotes') || '{}');
@@ -335,9 +315,6 @@
         };
 
         window.onload = () => {
-            const savedKey = localStorage.getItem('dartApiKey');
-            const dartEl = document.getElementById('dartApiKey');
-            if (savedKey && dartEl) dartEl.value = savedKey;
             loadCachedData();
         };
 
@@ -350,25 +327,24 @@
             applyFilters();
         }
 
-		async function loadCachedData() {
-			try {
-				const res = await fetch('./kospi_cache.json?v=' + Date.now());
-				const json = await res.json();
-				const list = Array.isArray(json) ? json : (json.data || []);
-				if (list.length > 0) {
-					rawStocks = list;
-					calculateQuantScores(rawStocks);
-					applyFilters();
-				}
-			} catch (e) {
-				console.error(e);
-			}
-		}
+        async function loadCachedData() {
+            try {
+                const res = await fetch('./kospi_cache.json?v=' + Date.now());
+                const json = await res.json();
+                const list = Array.isArray(json) ? json : (json.data || []);
+                if (list.length > 0) {
+                    rawStocks = list;
+                    calculateQuantScores(rawStocks);
+                    applyFilters();
+                }
+            } catch (e) {
+                console.error('캐시 로드 오류:', e);
+            }
+        }
 
         function calculateQuantScores(stocks) {
             stocks.forEach(s => {
                 let score = 50;
-
                 if (s.roe) {
                     if (s.roe >= 15) score += 10;
                     else if (s.roe >= 10) score += 6;
@@ -411,112 +387,6 @@
 
                 s.quantScore = Math.max(0, Math.min(100, Math.round(score)));
             });
-        }
-
-        function updateProgress(percent, text) {
-            const bar = document.getElementById('progressBar');
-            const box = document.getElementById('progressContainer');
-            const info = document.getElementById('progressInfo');
-            const txt = document.getElementById('progressText');
-            const pct = document.getElementById('progressPercent');
-
-            if (box) box.style.display = 'block';
-            if (info) info.style.display = 'flex';
-            if (bar) bar.style.width = `${percent}%`;
-            if (pct) pct.innerText = `${percent}%`;
-            if (txt) txt.innerText = text;
-        }
-
-        function abortSync() {
-            if (abortController) {
-                abortController.abort();
-                isSyncing = false;
-                const bFast = document.getElementById('btnFastSync');
-                const bFull = document.getElementById('btnFullSync');
-                const bAbort = document.getElementById('btnSyncAbort');
-                if (bFast) bFast.style.display = 'inline-flex';
-                if (bFull) bFull.style.display = 'inline-flex';
-                if (bAbort) bAbort.style.display = 'none';
-                updateProgress(0, '사용자에 의해 동기화가 중단되었습니다.');
-            }
-        }
-
-        async function startSync(isFastMode = true) {
-            const dartKey = getElVal('dartApiKey');
-            if (dartKey) localStorage.setItem('dartApiKey', dartKey);
-
-            const skipPenny = getElChecked('chkSkipPenny');
-
-            isSyncing = true;
-            abortController = new AbortController();
-            const signal = abortController.signal;
-
-            const bFast = document.getElementById('btnFastSync');
-            const bFull = document.getElementById('btnFullSync');
-            const bAbort = document.getElementById('btnSyncAbort');
-            if (bFast) bFast.style.display = 'none';
-            if (bFull) bFull.style.display = 'none';
-            if (bAbort) bAbort.style.display = 'inline-flex';
-
-            try {
-                const modeTitle = isFastMode ? '⚡ 초고속 모드' : '🚀 정밀 전체 모드';
-                updateProgress(5, `[1단계] ${selectedMarket} 보통주 수집 중...`);
-                
-                const krxRes = await fetch(`/api/sync-krx?market=${selectedMarket}`, { signal });
-                const krxJson = await krxRes.json();
-                let targetStocks = krxJson.data;
-
-                if (skipPenny) {
-                    targetStocks = targetStocks.filter(s => !s.marketCap || s.marketCap >= 300);
-                }
-                rawStocks = targetStocks;
-                calculateQuantScores(rawStocks);
-                applyFilters();
-
-                const chunkSize = 25;
-                const total = rawStocks.length;
-
-                for (let i = 0; i < total; i += chunkSize) {
-                    if (signal.aborted) break;
-                    const chunk = rawStocks.slice(i, i + chunkSize);
-
-                    const batchRes = await fetch('/api/sync-wisereport-batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ stocks: chunk, fastMode: isFastMode }),
-                        signal
-                    });
-                    const batchJson = await batchRes.json();
-
-                    if (batchJson.success && batchJson.data) {
-                        const dataMap = new Map(batchJson.data.map(d => [d.code, d]));
-                        rawStocks.forEach(s => {
-                            const d = dataMap.get(s.code);
-                            if (d) Object.assign(s, d);
-                        });
-                    }
-
-                    const completed = Math.min(i + chunkSize, total);
-                    const percent = Math.round(10 + (completed / total) * 88);
-                    updateProgress(percent, `[2단계 ${modeTitle}] 재무 & 국민연금/외인 수급 동기화 (${completed}/${total}개)...`);
-
-                    if (i % 150 === 0) {
-                        calculateQuantScores(rawStocks);
-                        applyFilters();
-                    }
-                }
-
-                calculateQuantScores(rawStocks);
-                updateProgress(100, `${modeTitle} 완료! 최신 캐시가 저장되었습니다. ✅`);
-                await loadCachedData();
-            } catch (e) {
-                if (e.name !== 'AbortError') updateProgress(0, '동기화 오류: ' + e.message);
-            } finally {
-                isSyncing = false;
-                if (bFast) bFast.style.display = 'inline-flex';
-                if (bFull) bFull.style.display = 'inline-flex';
-                if (bAbort) bAbort.style.display = 'none';
-            }
         }
 
         function changePageSize(val) {
@@ -574,6 +444,7 @@
         function applyFilters() {
             const kw = getElVal('searchKeyword').toLowerCase();
             const favOnly = getElChecked('chkFavOnly');
+            const skipPenny = getElChecked('chkSkipPenny');
 
             const getRange = (id) => {
                 const elMin = document.getElementById(`f_min_${id}`);
@@ -597,6 +468,7 @@
             filteredStocks = rawStocks.filter(s => {
                 if (selectedMarket !== 'ALL' && s.market && s.market !== selectedMarket) return false;
                 if (favOnly && !favorites.has(s.code)) return false;
+                if (skipPenny && s.marketCap && s.marketCap < 300) return false;
 
                 if (kw) {
                     const matchName = s.name && s.name.toLowerCase().includes(kw);
@@ -640,9 +512,9 @@
             renderTable();
         }
 
-		function openReport(code) {
-			window.open(`https://m.stock.naver.com/item/main/${code}`, '_blank');
-		}
+        function openReport(code) {
+            window.open(`https://m.stock.naver.com/item/main/${code}`, '_blank');
+        }
 
         function renderTable() {
             filteredStocks.sort((a, b) => {
@@ -682,7 +554,7 @@
                     <td>${s.code}</td>
                     <td>
                         <span class="badge ${s.market === 'KOSDAQ' ? 'badge-kosdaq' : 'badge-kospi'}">${s.market || 'KOSPI'}</span>
-                        <a class="stock-link" onclick="openReport('${s.code}')" title="심층 HTML 리포트">${s.name} ↗</a>
+                        <a class="stock-link" onclick="openReport('${s.code}')" title="네이버 모바일 증권 이동">${s.name} ↗</a>
                         ${s.isContinuousGrowth ? '<span class="badge badge-gold" title="3개년 연속 우상향">👑 3년연속</span>' : ''}
                         ${s.isUptrend ? '<span class="badge badge-green" title="상승추세">📈 상승</span>' : ''}
                     </td>
@@ -734,14 +606,12 @@
             }
         }
 
-        // ⭐ [신규] 진짜 마이크로소프트 엑셀 (.xlsx) 완벽 서식 산출물 생성
         function exportToExcel() {
             if (!filteredStocks || filteredStocks.length === 0) {
                 return alert('내보낼 검색 결과가 없습니다.');
             }
-
             if (typeof XLSX === 'undefined') {
-                return alert('엑셀 생성 모듈을 불러오는 중입니다. 1~2초 후 다시 클릭해 주세요.');
+                return alert('엑셀 모듈 로딩 중입니다. 잠시 후 다시 시도해 주세요.');
             }
 
             const headers = [
@@ -788,16 +658,12 @@
             const wsData = [headers, ...dataRows];
             const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-            // 종목코드(컬럼 인덱스 1) 텍스트 강제 서식 지정 (앞자리 0 보존)
             const range = XLSX.utils.decode_range(ws['!ref']);
             for (let R = 1; R <= range.e.r; ++R) {
                 const cellAddr = XLSX.utils.encode_cell({ r: R, c: 1 });
-                if (ws[cellAddr]) {
-                    ws[cellAddr].t = 's'; // 문자열 강제
-                }
+                if (ws[cellAddr]) ws[cellAddr].t = 's';
             }
 
-            // 각 열의 너비 자동 최적화
             const colWidths = headers.map((h, i) => {
                 let maxLen = h.length * 2;
                 for (let r = 0; r < Math.min(dataRows.length, 60); r++) {
@@ -815,7 +681,6 @@
             XLSX.writeFile(wb, `한국퀀트알짜주_전체산출물_${today}.xlsx`);
         }
 
-        // 기존 텍스트 CSV 내보내기 (보조용)
         function exportToCSV() {
             if (filteredStocks.length === 0) return alert('내보낼 검색 결과가 없습니다.');
 
